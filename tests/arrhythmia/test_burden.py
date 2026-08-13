@@ -1,5 +1,5 @@
 from canine_holter.types import Beat
-from canine_holter.arrhythmia.burden import summarize
+from canine_holter.arrhythmia.burden import summarize, pvc_runs
 
 
 def _beat(time, rr, label):
@@ -116,6 +116,44 @@ def test_hr_exactly_at_tachycardia_threshold_is_not_flagged():
     ]
     summary = summarize(beats, dog_weight_class="medium")
     assert summary.tachycardia_events == []
+
+
+def test_summarize_empty_beats_returns_zeroed_summary():
+    summary = summarize([], dog_weight_class="medium")
+    assert summary.total_beats == 0
+    assert summary.pvc_count == 0
+    assert summary.pvc_burden_pct == 0.0
+    assert summary.couplets == 0
+    assert summary.triplets == 0
+    assert summary.vtach_runs == 0
+    assert summary.bradycardia_events == []
+    assert summary.tachycardia_events == []
+    assert summary.pauses == []
+
+
+def test_pvc_runs_all_pvc_beats_form_one_run_starting_at_index_zero():
+    beats = [_beat(i * 0.5, 0.5 if i > 0 else None, "V") for i in range(4)]
+    runs = pvc_runs(beats)
+    assert len(runs) == 1
+    assert runs[0] == beats
+
+
+def test_bradycardia_run_still_open_at_end_of_recording_is_flagged():
+    # The recording ends mid-run (no trailing normal-rate beat to close it
+    # via the mid-loop branch) - this must still be caught by the post-loop
+    # closing check, not silently dropped because the loop ran out of beats.
+    beats = [
+        _beat(0.0, None, "N"),
+        _beat(0.8, 0.8, "N"),
+        _beat(2.3, 1.5, "N"),  # hr = 40 bpm
+        _beat(3.8, 1.5, "N"),  # hr = 40 bpm
+        _beat(5.3, 1.5, "N"),  # hr = 40 bpm - recording ends here, still slow
+    ]
+    summary = summarize(beats, dog_weight_class="medium")
+    assert len(summary.bradycardia_events) == 1
+    start, end = summary.bradycardia_events[0]
+    assert start == 2.3 - 1.5
+    assert end == 5.3
 
 
 def test_zero_rr_interval_does_not_crash_and_breaks_run():
