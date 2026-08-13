@@ -17,9 +17,16 @@ def test_detects_beats_in_mitbih_fixture():
     assert beats[0].rr_interval is None  # first beat has no prior beat
     assert all(b.rr_interval is not None for b in beats[1:])
     assert all(b.label is None for b in beats)  # not classified yet
-    # QRS delineation should succeed for at least some beats; a regression
-    # that silently makes qrs_duration always None would otherwise pass
-    assert any(b.qrs_duration is not None for b in beats)
+    # The energy-envelope QRS width measurement (replacing NeuroKit2's wave
+    # delineation, which returned NaN for 19/19 ground-truth PVC beats in
+    # this same fixture) should succeed for nearly every beat, not just
+    # "at least one" - confirmed 65/65 (100%) on this fixture; 90% leaves
+    # slack for incidental edge-of-recording beats without masking a
+    # regression back toward the old near-total-failure behavior.
+    non_none = sum(1 for b in beats if b.qrs_duration is not None)
+    assert non_none / len(beats) >= 0.9, (
+        f"only {non_none}/{len(beats)} beats had a non-None qrs_duration"
+    )
 
 
 def test_detects_beats_in_canine_fixture():
@@ -41,3 +48,31 @@ def test_returns_empty_list_for_flat_signal():
     flat_signal = np.zeros(1000)
     beats = detect_beats(flat_signal, sample_rate=360.0)
     assert beats == []
+
+
+def _gaussian_pulse(t, center, sigma, amplitude=2.0):
+    return amplitude * np.exp(-0.5 * ((t - center) / sigma) ** 2)
+
+
+def test_wide_synthetic_beat_measures_wider_than_narrow_synthetic_beat():
+    # Build a deterministic synthetic signal: a narrow Gaussian "QRS" pulse
+    # (sigma=8ms, roughly a normal QRS) followed by a wide one (sigma=40ms,
+    # roughly a PVC-like wide complex), at known sample positions. This
+    # exercises the envelope-based _qrs_width measurement directly through
+    # the public detect_beats() entry point without depending on any real
+    # ECG fixture.
+    sample_rate = 500.0
+    duration_sec = 4.0
+    n = int(duration_sec * sample_rate)
+    t = np.arange(n) / sample_rate
+    signal = np.zeros(n)
+    signal += _gaussian_pulse(t, center=1.0, sigma=0.008)  # narrow beat
+    signal += _gaussian_pulse(t, center=2.0, sigma=0.040)  # wide beat
+
+    beats = detect_beats(signal, sample_rate)
+
+    assert len(beats) == 2
+    narrow_beat, wide_beat = beats
+    assert narrow_beat.qrs_duration is not None
+    assert wide_beat.qrs_duration is not None
+    assert wide_beat.qrs_duration > narrow_beat.qrs_duration
