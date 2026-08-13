@@ -14,6 +14,11 @@ permissions:
 jobs:
   build-macos:
     runs-on: macos-latest
+    # macOS runners bill at a 10x minute multiplier; without this, a hang
+    # (e.g. a slow/stalled brew bottle pull, or notarization degrading past
+    # its own --wait sub-timeout in an unexpected way) could run up to the
+    # platform default of 6 hours - 60 billed hours off one bad run.
+    timeout-minutes: 45
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,7 +49,17 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          # Exported immediately, before anything below can fail, so the
+          # always-run cleanup step can still find and delete this keychain
+          # even if e.g. `security import` rejects a bad certificate
+          # password later in this same step.
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
           KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          # Not a secrets.* value, so Actions won't auto-mask it - mask it
+          # explicitly in case a future debugging change (set -x, a verbose
+          # flag) ever surfaces it in a log.
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
 
           echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
 
@@ -65,8 +80,6 @@ jobs:
           # the default login keychain.
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
 
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-
       - name: Build .app with PyInstaller
         run: python3.11 -m PyInstaller canine-holter.spec
 
@@ -74,7 +87,7 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          codesign --deep --force --options runtime \
+          codesign --deep --force --options runtime --timestamp \
             --sign "$APPLE_SIGNING_IDENTITY" \
             --keychain "$KEYCHAIN_PATH" \
             dist/canine-holter.app
