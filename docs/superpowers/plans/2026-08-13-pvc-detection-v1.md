@@ -620,7 +620,7 @@ from canine_holter.classify.rules import classify_beats
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
 
-def test_classifier_finds_most_known_pvc_beats_in_mitbih_record_100():
+def test_classifier_finds_most_known_pvc_beats_in_mitbih_record_119():
     fixture_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     rec = load_local_record(fixture_path, source="mitdb_119")
     ann = wfdb.rdann(fixture_path, "atr")
