@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Required so the default GITHUB_TOKEN can create a release asset via
+# `gh release create`. GitHub's default for GITHUB_TOKEN is read-only
+# (since Feb 2023); without this block the final step 403s.
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # actions/setup-python's macOS Python builds have a long,
+      # recurring history of shipping with a broken or missing
+      # tkinter whenever the runner image's underlying Tcl/Tk moves
+      # (actions/setup-python#314, #649, #856, #1102). Locally this
+      # project's dev venv needed `brew install python-tk@3.11` to
+      # get a working _tkinter against Homebrew's own python@3.11 -
+      # that pairing (Homebrew python + Homebrew python-tk, matched
+      # versions) is the combination actually known to work, so use
+      # it here too instead of trusting setup-python's bundled Tk.
+      - name: Set up Python 3.11 with Tk support (Homebrew)
+        run: brew install python@3.11 python-tk@3.11
+
+      - name: Verify tkinter is importable
+        run: python3.11 -c "import tkinter; tkinter.Tcl(); print('tkinter OK:', tkinter.TkVersion)"
+
+      - name: Install dependencies
+        run: |
+          python3.11 -m pip install --upgrade pip
+          python3.11 -m pip install -e ".[dev]"
+
+      - name: Import Apple certificate
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Add the new keychain to the search list *alongside* the
+          # existing ones (rather than replacing them) so codesign
+          # can still resolve Apple's root/intermediate certs from
+          # the default login keychain.
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Build .app with PyInstaller
+        run: python3.11 -m PyInstaller canine-holter.spec
+
+      - name: Codesign the app
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          codesign --deep --force --options runtime \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            --keychain "$KEYCHAIN_PATH" \
+            dist/canine-holter.app
+
+      - name: Package into a DMG
+        run: |
+          hdiutil create -volname "Canine Holter" -srcfolder dist/canine-holter.app \
+            -ov -format UDZO dist/canine-holter.dmg
+
+      - name: Notarize and staple
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit dist/canine-holter.dmg \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait --timeout 30m
+          xcrun stapler staple dist/canine-holter.dmg
+
+      - name: Clean up keychain
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN_PATH" || true
+          rm -f "$RUNNER_TEMP/certificate.p12" || true
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/canine-holter.dmg --title "$GITHUB_REF_NAME" --generate-notes

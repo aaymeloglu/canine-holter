@@ -46,5 +46,5 @@ app = BUNDLE(
     coll,
     name='canine-holter.app',
     icon=None,
-    bundle_identifier=None,
+    bundle_identifier='com.aymeloglu.canine-holter',
 )
