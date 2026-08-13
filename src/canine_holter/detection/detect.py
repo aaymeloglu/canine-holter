@@ -73,7 +73,7 @@ def _qrs_width(
     threshold = QRS_WIDTH_THRESHOLD_FRACTION * local_peak
 
     onset = None
-    for i in range(r_peak, lo, -1):
+    for i in range(r_peak, lo - 1, -1):
         if envelope[i] < threshold:
             onset = i
             break

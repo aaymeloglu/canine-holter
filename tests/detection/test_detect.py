@@ -1,7 +1,7 @@
 import os
 import numpy as np
 from canine_holter.ingest.wfdb_loader import load_local_record
-from canine_holter.detection.detect import detect_beats
+from canine_holter.detection.detect import detect_beats, _qrs_width
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "fixtures")
 
@@ -76,3 +76,22 @@ def test_wide_synthetic_beat_measures_wider_than_narrow_synthetic_beat():
     assert narrow_beat.qrs_duration is not None
     assert wide_beat.qrs_duration is not None
     assert wide_beat.qrs_duration > narrow_beat.qrs_duration
+
+
+def test_qrs_width_finds_onset_at_clamped_search_window_start():
+    # Regression test for an off-by-one where the backward (onset) scan used
+    # range(r_peak, lo, -1), which never evaluates envelope[lo] - invisible
+    # unless the true threshold crossing sits exactly at the clamped window
+    # boundary (lo=0, i.e. an R-peak within the search window of sample 0).
+    # envelope[0] is the only sample below threshold on the onset side;
+    # a scan that skips index 0 finds no onset and wrongly returns None.
+    sample_rate = 500.0
+    envelope = np.array([0.5, 5.0, 10.0, 0.5, 0.5])
+    r_peak = 2
+    search_half = 75  # larger than r_peak, so lo clamps to 0
+
+    duration = _qrs_width(envelope, r_peak, search_half, sample_rate)
+
+    assert duration is not None
+    onset_index, offset_index = 0, 3
+    assert duration == (offset_index - onset_index) / sample_rate
