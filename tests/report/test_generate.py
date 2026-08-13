@@ -99,9 +99,14 @@ def test_plot_strip_clamps_near_start_without_wraparound(monkeypatch):
     detect.py's _qrs_width search-window clamping: for an event very close
     to the start of the recording, (center_time - half_window) * sample_rate
     goes negative. If that negative value isn't clamped to 0 before slicing,
-    Python interprets a moderately negative start index as "count from the
-    end", silently pulling in unrelated data from the tail of the recording
-    instead of an error. Verify the clamp actually prevents that."""
+    Python interprets it as "count from the end" rather than raising an
+    error. For a short strip window on a long recording (this test's case),
+    the normalized negative start lands past the (also-clamped) stop index,
+    so unclamped code would silently produce an empty plot rather than an
+    error - not, in general, a guarantee of pulling in real tail data,
+    though a window comparable to the recording length could produce that
+    too. Either way, verify the max(0, ...) clamp prevents the empty-plot
+    failure mode and the strip genuinely starts at sample 0."""
     import numpy as np
     import matplotlib.pyplot as plt
     from canine_holter.report.generate import _plot_strip
