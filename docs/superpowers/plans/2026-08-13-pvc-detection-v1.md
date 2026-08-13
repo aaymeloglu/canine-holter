@@ -206,39 +206,45 @@ FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "tests", "fixtures"
 
 
 def fetch_mitbih_sample():
-    """First 60 seconds of MIT-BIH record 100 (360Hz), with beat annotations.
-    Record 100 is a standard, well-characterized MIT-BIH record with some
-    PVC (annotation symbol 'V') beats present."""
-    out_dir = os.path.join(FIXTURES_DIR, "mitdb_100")
+    """First 60 seconds of MIT-BIH record 119 (360Hz), with beat annotations.
+    Record 119 has a ventricular bigeminy pattern with 19 PVC ('V') beats in
+    the first 60 seconds alone - necessary for Task 7's validation, which
+    needs real PVC-labeled beats within the fixture window. (Record 100, a
+    more commonly-cited "standard" record, has only 1 PVC in its entire
+    30-minute recording, occurring outside any 60s slice - confirmed by
+    reading its annotation file - so it was rejected as a fixture choice.)"""
+    out_dir = os.path.join(FIXTURES_DIR, "mitdb_119")
     os.makedirs(out_dir, exist_ok=True)
-    record = wfdb.rdrecord("100", pn_dir="mitdb", sampto=21600)
-    ann = wfdb.rdann("100", "atr", pn_dir="mitdb", sampto=21600)
+    record = wfdb.rdrecord("119", pn_dir="mitdb", sampto=21600)
+    ann = wfdb.rdann("119", "atr", pn_dir="mitdb", sampto=21600)
     wfdb.wrsamp(
-        record_name="100",
+        record_name="119",
         fs=record.fs,
         units=record.units,
         sig_name=record.sig_name,
         p_signal=record.p_signal,
         write_dir=out_dir,
     )
-    ann.record_name = "100"
+    ann.record_name = "119"
     ann.wrann(write_dir=out_dir)
     print(f"Wrote MIT-BIH fixture to {out_dir}")
 
 
 def fetch_physiozoo_dog_sample():
-    """A short canine ECG sample from the PhysioZoo Mammalian NSR Database.
+    """A canine ECG sample from the PhysioZoo Mammalian NSR Database.
 
-    IMPORTANT: the exact record name below is illustrative. Before running,
-    check the actual record list at
-    https://physionet.org/content/physiozoo/1.0.0/ (look for the RECORDS
-    file or browse the file listing) and update RECORD_NAME to match a real
-    dog ECG record from that database.
+    Confirmed via the PhysioNet file browser at
+    physionet.org/files/physiozoo/1.0.0/wfdb_format/dog/ - 17 subdirectories
+    Dog_01 through Dog_17, each with Dog_NN.{dat,hea,qrs}. Normal sinus
+    rhythm only (no PVC labels) - used for canine-morphology R-peak
+    validation, not PVC ground truth.
     """
-    RECORD_NAME = "dog1"  # placeholder - verify against the real RECORDS list
+    RECORD_NAME = "Dog_01"
+    PN_DIR = "physiozoo/1.0.0/wfdb_format/dog/Dog_01"
     out_dir = os.path.join(FIXTURES_DIR, "physiozoo_dog1")
     os.makedirs(out_dir, exist_ok=True)
-    record = wfdb.rdrecord(RECORD_NAME, pn_dir="physiozoo/1.0.0")
+    record = wfdb.rdrecord(RECORD_NAME, pn_dir=PN_DIR)
+    ann = wfdb.rdann(RECORD_NAME, "qrs", pn_dir=PN_DIR)
     wfdb.wrsamp(
         record_name=RECORD_NAME,
         fs=record.fs,
@@ -247,6 +253,8 @@ def fetch_physiozoo_dog_sample():
         p_signal=record.p_signal,
         write_dir=out_dir,
     )
+    ann.record_name = RECORD_NAME
+    ann.wrann(write_dir=out_dir)
     print(f"Wrote PhysioZoo fixture to {out_dir}")
 
 
@@ -255,21 +263,17 @@ if __name__ == "__main__":
     fetch_physiozoo_dog_sample()
 ```
 
-- [ ] **Step 2: Verify the actual PhysioZoo record name**
-
-Visit https://physionet.org/content/physiozoo/1.0.0/ in a browser, find a dog ECG record name from the file listing (likely under an `mammalian-nsr` or similarly named subdirectory), and update `RECORD_NAME` in the script above to match. This step has no automated check — confirm by eye before proceeding.
-
-- [ ] **Step 3: Run the script and verify fixture files were created**
+- [ ] **Step 2: Run the script and verify fixture files were created**
 
 ```bash
 python scripts/fetch_fixtures.py
-ls tests/fixtures/mitdb_100/
+ls tests/fixtures/mitdb_119/
 ls tests/fixtures/physiozoo_dog1/
 ```
 
-Expected: each directory contains a `.dat` and `.hea` file (and `mitdb_100` also has a `.atr` file).
+Expected: `mitdb_119` contains `.dat`/`.hea`/`.atr` files; `physiozoo_dog1` contains `.dat`/`.hea`/`.qrs` files.
 
-- [ ] **Step 4: Commit the fixtures**
+- [ ] **Step 3: Commit the fixtures**
 
 ```bash
 git add scripts/fetch_fixtures.py tests/fixtures/
@@ -296,15 +300,15 @@ FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "fixtures")
 
 
 def test_loads_mitbih_fixture_as_recording():
-    path = os.path.join(FIXTURES_DIR, "mitdb_100", "100")
-    rec = load_local_record(path, source="mitdb_100")
+    path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
+    rec = load_local_record(path, source="mitdb_119")
     assert rec.sample_rate == 360.0
     assert len(rec.samples) > 0
-    assert rec.source == "mitdb_100"
+    assert rec.source == "mitdb_119"
 
 
 def test_loads_physiozoo_fixture_as_recording():
-    path = os.path.join(FIXTURES_DIR, "physiozoo_dog1", "dog1")
+    path = os.path.join(FIXTURES_DIR, "physiozoo_dog1", "Dog_01")
     rec = load_local_record(path, source="physiozoo_dog1")
     assert rec.sample_rate > 0
     assert len(rec.samples) > 0
@@ -325,7 +329,7 @@ from canine_holter.types import Recording
 
 def load_local_record(record_path: str, source: str, channel: int = 0) -> Recording:
     """Load a local WFDB record (a .dat/.hea pair sharing `record_path` as
-    their base path, e.g. 'tests/fixtures/mitdb_100/100') into a Recording.
+    their base path, e.g. 'tests/fixtures/mitdb_119/119') into a Recording.
 
     Uses the first signal channel by default (channel=0) since this
     pipeline is single-lead.
@@ -374,7 +378,7 @@ FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "fixtures")
 
 def test_detects_beats_in_mitbih_fixture():
     rec = load_local_record(
-        os.path.join(FIXTURES_DIR, "mitdb_100", "100"), source="mitdb_100"
+        os.path.join(FIXTURES_DIR, "mitdb_119", "119"), source="mitdb_119"
     )
     beats = detect_beats(rec.samples, rec.sample_rate)
     # 60s at a resting ~75bpm should be roughly 60-90 beats; a wide sanity
@@ -387,7 +391,7 @@ def test_detects_beats_in_mitbih_fixture():
 
 def test_detects_beats_in_canine_fixture():
     rec = load_local_record(
-        os.path.join(FIXTURES_DIR, "physiozoo_dog1", "dog1"), source="physiozoo_dog1"
+        os.path.join(FIXTURES_DIR, "physiozoo_dog1", "Dog_01"), source="physiozoo_dog1"
     )
     beats = detect_beats(rec.samples, rec.sample_rate)
     assert len(beats) > 0
@@ -617,8 +621,8 @@ FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
 
 def test_classifier_finds_most_known_pvc_beats_in_mitbih_record_100():
-    fixture_path = os.path.join(FIXTURES_DIR, "mitdb_100", "100")
-    rec = load_local_record(fixture_path, source="mitdb_100")
+    fixture_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
+    rec = load_local_record(fixture_path, source="mitdb_119")
     ann = wfdb.rdann(fixture_path, "atr")
 
     # Ground-truth PVC beat times (annotation symbol 'V'), in seconds
@@ -654,7 +658,7 @@ def test_classifier_finds_most_known_pvc_beats_in_mitbih_record_100():
 - [ ] **Step 2: Run the test**
 
 Run: `pytest tests/test_mitbih_validation.py -v`
-Expected: PASS. If it fails, print the actual sensitivity and inspect whether detection or classification is the weak link before changing thresholds - don't tune `PREMATURITY_RATIO`/`QRS_WIDTH_RATIO` purely to make this pass, since record 100 is human data and the real tuning target is canine recordings later.
+Expected: PASS. If it fails, print the actual sensitivity and inspect whether detection or classification is the weak link before changing thresholds - don't tune `PREMATURITY_RATIO`/`QRS_WIDTH_RATIO` purely to make this pass, since record 119 is human data and the real tuning target is canine recordings later.
 
 - [ ] **Step 3: Commit**
 
@@ -1058,7 +1062,7 @@ FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
 
 def test_run_analysis_produces_report_from_fixture():
-    input_path = os.path.join(FIXTURES_DIR, "mitdb_100", "100")
+    input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
         report_path = run_analysis(input_path, out_dir)
         assert os.path.exists(report_path)
@@ -1139,7 +1143,7 @@ if __name__ == "__main__":
 - [ ] **Step 6: Manually verify the CLI runs end-to-end**
 
 ```bash
-canine-holter tests/fixtures/mitdb_100/100 --out /tmp/canine-holter-report
+canine-holter tests/fixtures/mitdb_119/119 --out /tmp/canine-holter-report
 cat /tmp/canine-holter-report/report.md
 ```
 
@@ -1175,7 +1179,7 @@ FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "fixtures")
 
 
 def test_analyze_and_report_returns_report_path_on_success():
-    input_path = os.path.join(FIXTURES_DIR, "mitdb_100", "100")
+    input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
         result = analyze_and_report(input_path, out_dir)
         assert result.success is True
@@ -1278,7 +1282,7 @@ Expected: PASS (2 passed)
 python -m canine_holter.gui.app
 ```
 
-Expected: a small window opens with a "Choose Recording..." button. Click it, pick `tests/fixtures/mitdb_100/100.hea`, pick an output folder, confirm a success dialog appears and the report opens.
+Expected: a small window opens with a "Choose Recording..." button. Click it, pick `tests/fixtures/mitdb_119/119.hea`, pick an output folder, confirm a success dialog appears and the report opens.
 
 - [ ] **Step 6: Commit**
 
