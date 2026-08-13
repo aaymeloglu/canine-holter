@@ -22,3 +22,10 @@ def test_beat_is_immutable_and_replaceable():
     labeled = replace(beat, label="V")
     assert labeled.label == "V"
     assert beat.label is None  # original unchanged
+
+
+def test_recording_equality_does_not_raise_on_array_field():
+    rec1 = Recording(samples=np.array([1.0, 2.0]), sample_rate=360.0, start_time=None, source="a")
+    rec2 = Recording(samples=np.array([3.0, 4.0]), sample_rate=360.0, start_time=None, source="b")
+    assert (rec1 == rec2) is False  # must not raise
+    assert (rec1 == rec1) is True
