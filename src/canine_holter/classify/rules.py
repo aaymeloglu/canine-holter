@@ -23,6 +23,14 @@ def classify_beats(beats: list[Beat]) -> list[Beat]:
     provisionally labeled "N" (this is what seeds the baseline). A beat is
     only "U" (undetermined) when its own RR interval or QRS duration is
     missing - never as a substitute for "we haven't decided yet".
+
+    IMPORTANT - causality invariant: the loop below must remain strictly
+    sequential. Beat N's classification may only use beats 0..N-1 (via
+    baseline_rr/baseline_qrs, which are only updated *after* a beat is
+    labeled). Do not replace this loop with a vectorized/batch rolling-median
+    computation (e.g. a centered pandas rolling window) - that would let
+    future beats leak into a beat's baseline, which is invisible in offline
+    testing but wrong for a real-time classifier.
     """
     baseline_rr: deque[float] = deque(maxlen=BASELINE_WINDOW)
     baseline_qrs: deque[float] = deque(maxlen=BASELINE_WINDOW)
