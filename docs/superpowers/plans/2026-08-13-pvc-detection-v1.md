@@ -543,6 +543,12 @@ def classify_beats(beats: list[Beat]) -> list[Beat]:
     Baseline is computed causally from the most recent beats labeled "N",
     so thresholds adapt to each recording's (and each dog's) own rhythm
     rather than relying on a fixed literature value.
+
+    Bootstrapping: before any baseline exists, there is nothing to compare
+    a beat's RR/QRS against, so a beat with complete measurements is
+    provisionally labeled "N" (this is what seeds the baseline). A beat is
+    only "U" (undetermined) when its own RR interval or QRS duration is
+    missing - never as a substitute for "we haven't decided yet".
     """
     baseline_rr: deque[float] = deque(maxlen=BASELINE_WINDOW)
     baseline_qrs: deque[float] = deque(maxlen=BASELINE_WINDOW)
@@ -554,17 +560,18 @@ def classify_beats(beats: list[Beat]) -> list[Beat]:
         have_baseline = len(baseline_rr) > 0 and len(baseline_qrs) > 0
         have_measurements = beat.rr_interval is not None and beat.qrs_duration is not None
 
-        if have_baseline and have_measurements:
-            rr_base = statistics.median(baseline_rr)
-            qrs_base = statistics.median(baseline_qrs)
-            is_premature = beat.rr_interval < PREMATURITY_RATIO * rr_base
-            is_wide = beat.qrs_duration > QRS_WIDTH_RATIO * qrs_base
-            label = "V" if (is_premature and is_wide) else "N"
-        elif len(baseline_rr) > 0 and beat.rr_interval is not None:
-            # Baseline exists but QRS width is missing for this beat - not
-            # enough evidence to call it a PVC, so default to "N" rather
-            # than risk a false positive on missing data.
-            label = "N"
+        if have_measurements:
+            if have_baseline:
+                rr_base = statistics.median(baseline_rr)
+                qrs_base = statistics.median(baseline_qrs)
+                is_premature = beat.rr_interval < PREMATURITY_RATIO * rr_base
+                is_wide = beat.qrs_duration > QRS_WIDTH_RATIO * qrs_base
+                label = "V" if (is_premature and is_wide) else "N"
+            else:
+                # No baseline yet: nothing to measure prematurity/width
+                # against, so this beat can't be flagged as a PVC. Treat it
+                # as provisionally normal so the baseline can seed itself.
+                label = "N"
 
         labeled_beat = replace(beat, label=label)
         labeled.append(labeled_beat)
