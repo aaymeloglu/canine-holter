@@ -215,3 +215,148 @@ def test_native_flash_rejects_non_contiguous_data_blocks(tmp_path):
 
     with pytest.raises(NativeDR200FormatError, match="Non-contiguous"):
         load_native_flash(path)
+
+
+def _metadata_block_raw(text: str) -> bytes:
+    """A metadata block carrying arbitrary INI text (for malformed-value tests)."""
+    block = bytearray(512)
+    struct.pack_into("<I", block, 0, 512)
+    block[4:6] = b" \n"
+    encoded = text.encode("ascii")
+    block[6 : 6 + len(encoded)] = encoded
+    return _finish_block(block)
+
+
+def test_native_flash_rejects_empty_file(tmp_path):
+    path = tmp_path / "flash.dat"
+    path.write_bytes(b"")
+    with pytest.raises(NativeDR200FormatError, match="is empty"):
+        load_native_flash(path)
+
+
+def test_native_flash_rejects_truncated_block(tmp_path):
+    # A partial final block that still carries nonzero bytes is corruption,
+    # not the benign zero-filled preallocated tail.
+    path = tmp_path / "flash.dat"
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    path.write_bytes(_metadata_block() + _data_block(encoded) + b"\x01\x02\x03")
+    with pytest.raises(NativeDR200FormatError, match="truncated block"):
+        load_native_flash(path)
+
+
+def test_native_flash_rejects_data_after_zero_padding(tmp_path):
+    # Zero blocks mark the unused tail of a preallocated card; real data must
+    # never appear after them.
+    path = tmp_path / "flash.dat"
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    path.write_bytes(
+        _metadata_block() + bytes(512) + _data_block(encoded) + bytes(511)
+    )
+    with pytest.raises(NativeDR200FormatError, match="data after zero padding"):
+        load_native_flash(path)
+
+
+def test_native_flash_rejects_bad_block_length(tmp_path):
+    path = tmp_path / "flash.dat"
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    block = bytearray(_metadata_block())
+    struct.pack_into("<I", block, 0, 256)  # claim a wrong length
+    block = _finish_block(block)  # keep the checksum valid so length is the fault
+    path.write_bytes(block + _data_block(encoded) + bytes(511))
+    with pytest.raises(NativeDR200FormatError, match="block length"):
+        load_native_flash(path)
+
+
+def test_native_flash_rejects_missing_metadata(tmp_path):
+    # A data block with a valid checksum but no metadata block anywhere.
+    path = tmp_path / "flash.dat"
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    path.write_bytes(_data_block(encoded) + bytes(511))
+    with pytest.raises(NativeDR200FormatError, match="missing recording metadata"):
+        load_native_flash(path)
+
+
+def test_native_flash_rejects_recording_with_no_ecg_blocks(tmp_path):
+    path = tmp_path / "flash.dat"
+    path.write_bytes(_metadata_block() + bytes(511))
+    with pytest.raises(NativeDR200FormatError, match="no three-channel ECG blocks"):
+        load_native_flash(path)
+
+
+def test_native_flash_rejects_non_numeric_sample_rate(tmp_path):
+    path = tmp_path / "flash.dat"
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    metadata = _metadata_block_raw(
+        "SampleRate=fast\nSampleStorageFormat=1\n"
+        "start_time=11:12:50\nstart_date=07/08/10\n"
+    )
+    path.write_bytes(metadata + _data_block(encoded) + bytes(511))
+    with pytest.raises(NativeDR200FormatError, match="invalid SampleRate"):
+        load_native_flash(path)
+
+
+def test_native_flash_rejects_invalid_channel_index(tmp_path):
+    path = tmp_path / "flash.dat"
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    _write_native_flash(path, encoded)
+    with pytest.raises(ValueError, match="channel must be 0, 1, or 2"):
+        load_native_flash(path, channel=3)
+
+
+def test_native_flash_rejects_misaligned_pacemaker_marker(tmp_path):
+    # Nibble 8 is documented as a simultaneous marker on all three channels;
+    # a marker on only one channel means the stream is misframed, so fail
+    # rather than silently mis-decode it.
+    path = tmp_path / "flash.dat"
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    encoded[0, 0] = 8  # channel 0 only
+    _write_native_flash(path, encoded)
+    with pytest.raises(NativeDR200FormatError, match="not aligned across all three"):
+        load_native_flash(path)
+
+
+def test_decoded_channel_all_pacemaker_markers_raises(tmp_path):
+    path = tmp_path / "flashc0.dat"
+    path.write_bytes(struct.pack("<hhh", -32768, -32768, -32768))
+    with pytest.raises(ValueError, match="pacemaker markers but no ECG samples"):
+        load_decoded_channel(path)
+
+
+def test_decoded_channel_interpolates_pacemaker_at_start_and_end(tmp_path):
+    # Markers at the very first and very last sample have only one neighbour,
+    # so they are held from that neighbour rather than interpolated between two.
+    path = tmp_path / "flashc0.dat"
+    path.write_bytes(struct.pack("<hhhh", -32768, 80, 160, -32768))
+    rec = load_decoded_channel(path)
+    np.testing.assert_allclose(rec.samples, [1.0, 1.0, 2.0, 2.0])
+
+
+def test_native_flash_missing_file_raises_actionable_error(tmp_path):
+    with pytest.raises(FileNotFoundError, match="flash.dat not found"):
+        load_native_flash(tmp_path / "nope" / "flash.dat")
+
+
+def test_decoded_channel_missing_file_raises_actionable_error(tmp_path):
+    with pytest.raises(FileNotFoundError, match="channel file not found"):
+        load_decoded_channel(tmp_path / "missing.raw")
+
+
+def test_native_flash_rejects_all_zero_file(tmp_path):
+    # A card that was formatted/preallocated but never recorded is all zero
+    # blocks with no metadata or data.
+    path = tmp_path / "flash.dat"
+    path.write_bytes(bytes(512) * 3)
+    with pytest.raises(NativeDR200FormatError, match="no recording blocks"):
+        load_native_flash(path)
+
+
+def test_native_flash_rejects_unparseable_start_datetime(tmp_path):
+    path = tmp_path / "flash.dat"
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    metadata = _metadata_block_raw(
+        "SampleRate=180\nSampleStorageFormat=1\n"
+        "start_time=99:99:99\nstart_date=77/77/77\n"
+    )
+    path.write_bytes(metadata + _data_block(encoded) + bytes(511))
+    with pytest.raises(NativeDR200FormatError, match="start date/time"):
+        load_native_flash(path)
