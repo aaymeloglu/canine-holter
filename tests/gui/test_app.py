@@ -70,7 +70,7 @@ def test_on_pick_file_returns_early_when_output_dir_dialog_cancelled(monkeypatch
     assert events == []
 
 
-def test_on_pick_file_success_strips_hea_extension_and_shows_info(monkeypatch):
+def test_on_pick_file_success_passes_selected_recording_and_shows_info(monkeypatch):
     events = []
     captured_args = {}
 
@@ -89,9 +89,9 @@ def test_on_pick_file_success_strips_hea_extension_and_shows_info(monkeypatch):
 
     gui_app._on_pick_file()
 
-    # The .hea extension must be stripped so the WFDB loader gets the base
-    # record path (e.g. "119"), not the header file path (e.g. "119.hea").
-    assert captured_args == {"input_path": "/recordings/119", "out_dir": "/tmp/out"}
+    # Format normalization belongs to the shared ingest dispatcher, so the GUI
+    # passes through both WFDB headers and DR200 channel files unchanged.
+    assert captured_args == {"input_path": "/recordings/119.hea", "out_dir": "/tmp/out"}
     assert events == [
         ("showinfo", ("Done", "Report written to /tmp/out/report.md")),
         ("open", "/tmp/out/report.md"),

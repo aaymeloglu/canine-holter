@@ -43,8 +43,7 @@ Data flow: raw recorder file → standardized signal → R-peak/QRS detection �
 ```
 canine-holter/
   ingest/       # raw file -> (samples, sample_rate, channel info, recording start time)
-                # - dr200.py: DR200/Northeast-Monitoring format parser (blocked on
-                #   confirming the raw export format - see Open items)
+                # - dr200.py: native DR200 flash.dat and decoded channel parser
                 # - wfdb_loader.py: loads MIT-BIH records, used only for pipeline testing
   detection/    # NeuroKit2 wrapper: R-peak detection + QRS onset/offset delineation
   classify/     # beat -> Normal | PVC | Other (rules-based, see above)
@@ -87,6 +86,6 @@ Result: tagging a release builds a signed, notarized `.dmg` with no Gatekeeper f
 
 ## Open items
 
-1. **DR200 raw export format unconfirmed.** Pending response from ALBA Medical (emailed 2026-08-13) on whether the DR200 exports a documented/open format (suspected to be Northeast Monitoring-family `flash.dat`, which has a public-domain format and an existing open-source reader, `ishneholterlib`) or something proprietary. Blocks `ingest/dr200.py` specifically; nothing else in the pipeline depends on this.
+1. **DR200 raw export research — completed for the observed mode.** The SD card contains NorthEast Monitoring's proprietary `flash.dat`, not ISHNE. The official DR200 manual documents conversion to three 180 Hz, signed-int16 channels but not the native layout. Inspection of the official HE/LX 6.0e demo recording and its converter established the checksummed block layout and nonlinear four-bit difference table for three-channel `SampleStorageFormat=1`; `ingest/dr200.py` now parses that mode directly. Unknown storage formats and sampling rates fail closed. Details and reproducible fixture hashes are in `docs/dr200-format.md`.
 2. **Canine ECG dataset search — completed.** No public dataset with canine beats labeled normal-vs-PVC exists (checked Zenodo, Figshare, Dryad, Mendeley, IEEE DataPort, Harvard Dataverse, Kaggle, UCI ML Repository, GitHub, VetCompass, and the major vet cardiology schools directly). The PhysioZoo Mammalian NSR Database (17 dog recordings, PhysioNet) has R-peak annotations but normal sinus rhythm only — folded into the testing strategy above. Two direct-contact leads for real PVC-labeled canine data, both currently unconfirmed: Wess et al. (LMU Munich, the group that defined the Doberman PVC-burden screening thresholds this project targets) and Dourson/Santilli et al.'s "PulseNet" paper (arXiv:2305.15424, 1,462 canine ECG recordings labeled normal/abnormal by 3 board-certified veterinary cardiologists). Neither has a confirmed public release; outreach emails to both are a candidate next step, independent of and not blocking v1 implementation.
 3. **Canine HR/pause thresholds are provisional.** Bradycardia/tachycardia/pause flags will use reasonable default ranges initially but are expected to need calibration per-dog rather than relying on fixed literature values, similar to the PVC prematurity threshold.
