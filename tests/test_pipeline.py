@@ -1,11 +1,11 @@
 # tests/test_pipeline.py
 import os
 import re
-import struct
 import tempfile
 
 import numpy as np
 from canine_holter.pipeline import run_analysis
+from tests.native_flash_factory import data_block, metadata_block
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -58,44 +58,9 @@ def test_run_analysis_report_contains_plausible_stats_for_known_fixture():
     )
 
 
-# --- End-to-end integration through the native DR200 flash.dat path ---
-#
-# The fixture-based tests above cover the WFDB ingest path. This builds a
-# small synthetic native flash.dat (a periodic spike train) and runs the whole
-# ingest(dr200) -> detect -> classify -> summarize -> report chain on it, so a
-# regression that breaks the DR200 wiring (not just the decoder in isolation)
-# is caught here rather than only in production.
+# The fixture tests above use WFDB; this exercises the native DR200 path.
 
-_FLASH_CHECKSUM_TOTAL = 0x4CB31
 _FLASH_SPIKE_PERIOD = 90  # 180 Hz / 90 samples = 2 Hz = 120 bpm
-
-
-def _finish_flash_block(block: bytearray) -> bytes:
-    struct.pack_into("<I", block, 508, _FLASH_CHECKSUM_TOTAL - sum(block[:508]))
-    return bytes(block)
-
-
-def _flash_metadata_block() -> bytes:
-    block = bytearray(512)
-    struct.pack_into("<I", block, 0, 512)
-    block[4:6] = b" \n"
-    meta = (
-        b"SampleRate=180\nSampleStorageFormat=1\n"
-        b"start_time=11:12:50\nstart_date=07/08/10\n"
-    )
-    block[6 : 6 + len(meta)] = meta
-    return _finish_flash_block(block)
-
-
-def _flash_data_block(encoded, source_position: int) -> bytes:
-    nibbles = encoded.reshape(-1).astype(np.uint8)
-    packed = (nibbles[0::2] | (nibbles[1::2] << 4)).astype(np.uint8)
-    block = bytearray(512)
-    struct.pack_into("<I", block, 0, 512)
-    block[4] = 0x1E
-    struct.pack_into("<I", block, 6, source_position)
-    block[10:466] = packed.tobytes()
-    return _finish_flash_block(block)
 
 
 def _spike_train_block_encoding():
@@ -112,12 +77,11 @@ def _spike_train_block_encoding():
 
 def _write_synthetic_flash(path, block_count: int = 15) -> None:
     encoded = _spike_train_block_encoding()
-    data = _flash_metadata_block()
-    position = 5900
-    for _ in range(block_count):
-        data += _flash_data_block(encoded, position)
-        position += 304 * 4
-    path.write_bytes(data + bytes(511))
+    blocks = (
+        data_block(encoded, source_position=5900 + index * 304 * 4)
+        for index in range(block_count)
+    )
+    path.write_bytes(metadata_block() + b"".join(blocks) + bytes(511))
 
 
 def test_run_analysis_end_to_end_on_native_flash(tmp_path):

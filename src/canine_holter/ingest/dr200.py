@@ -35,15 +35,7 @@ class NativeDR200FormatError(ValueError):
 
 
 def _replace_pacemaker_markers(samples: np.ndarray) -> np.ndarray:
-    """Replace 0x8000 pacemaker markers with interpolated nearby samples.
-
-    NorthEast reserves 0x8000 in decoded channel files to mark a detected
-    pacemaker pulse.  Treating it as an ordinary signed sample would create a
-    -409.6 mV impulse and corrupt beat detection, so reconstruct the underlying
-    signal from its neighbours instead.  Dogs without pacemakers normally have
-    no such markers, but handling them here keeps the loader faithful to the
-    documented format.
-    """
+    """Interpolate 0x8000 pacemaker markers from nearby ECG samples."""
     marker_indices = np.flatnonzero(samples == DR200_PACEMAKER_MARKER)
     if marker_indices.size == 0:
         return samples
@@ -51,18 +43,10 @@ def _replace_pacemaker_markers(samples: np.ndarray) -> np.ndarray:
         raise ValueError("DR200 channel contains pacemaker markers but no ECG samples")
 
     result = samples.astype(np.float64, copy=False)
-    breaks = np.flatnonzero(np.diff(marker_indices) != 1) + 1
-    for run in np.split(marker_indices, breaks):
-        start = int(run[0])
-        end = int(run[-1]) + 1
-        if start == 0:
-            result[start:end] = result[end]
-        elif end == result.size:
-            result[start:end] = result[start - 1]
-        else:
-            result[start:end] = np.linspace(
-                result[start - 1], result[end], len(run) + 2
-            )[1:-1]
+    sample_indices = np.flatnonzero(samples != DR200_PACEMAKER_MARKER)
+    result[marker_indices] = np.interp(
+        marker_indices, sample_indices, result[sample_indices]
+    )
     return result
 
 
@@ -114,13 +98,8 @@ def load_decoded_channel(
 
 def _parse_metadata(block: bytes) -> dict[str, str]:
     text = block[6:508].split(b"\0", 1)[0].decode("ascii", errors="replace")
-    metadata: dict[str, str] = {}
-    for line in text.splitlines():
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        metadata[key.strip()] = value.strip()
-    return metadata
+    pairs = (line.split("=", 1) for line in text.splitlines() if "=" in line)
+    return {key.strip(): value.strip() for key, value in pairs}
 
 
 def _read_start_time(metadata: dict[str, str]) -> datetime | None:
@@ -177,7 +156,7 @@ def _iter_active_blocks(path: Path):
             block_index += 1
 
 
-def _inspect_native_flash(path: Path) -> tuple[dict[str, str], int]:
+def _inspect_native_flash(path: Path) -> tuple[int, datetime | None]:
     metadata: dict[str, str] = {}
     data_block_count = 0
     expected_position: int | None = None
@@ -185,8 +164,8 @@ def _inspect_native_flash(path: Path) -> tuple[dict[str, str], int]:
 
     for _, block in _iter_active_blocks(path):
         active_block_count += 1
-        if b"SampleStorageFormat=" in block:
-            metadata.update(_parse_metadata(block))
+        if active_block_count == 1 and b"SampleStorageFormat=" in block:
+            metadata = _parse_metadata(block)
 
         if block[4] != _DATA_BLOCK_TYPE or block[5] != 0:
             continue
@@ -214,7 +193,16 @@ def _inspect_native_flash(path: Path) -> tuple[dict[str, str], int]:
     if data_block_count == 0:
         raise NativeDR200FormatError("DR200 flash.dat contains no three-channel ECG blocks")
 
-    return metadata, data_block_count
+    try:
+        sample_rate = float(metadata["SampleRate"])
+    except (KeyError, ValueError):
+        raise NativeDR200FormatError("DR200 flash.dat has an invalid SampleRate") from None
+    if sample_rate != DR200_SAMPLE_RATE:
+        raise NativeDR200FormatError(
+            f"Unsupported DR200 sample rate {sample_rate:g} Hz; expected 180 Hz"
+        )
+
+    return data_block_count, _read_start_time(metadata)
 
 
 def _decode_data_block(block: bytes) -> tuple[np.ndarray, np.ndarray]:
@@ -224,9 +212,8 @@ def _decode_data_block(block: bytes) -> tuple[np.ndarray, np.ndarray]:
     nibbles[1::2] = packed >> 4
     encoded = nibbles.reshape(_SAMPLES_PER_BLOCK, 3)
 
-    marker_channels = encoded == 8
-    marker_rows = marker_channels.any(axis=1)
-    if np.any(marker_rows) and not np.all(marker_channels[marker_rows]):
+    marker_rows = np.any(encoded == 8, axis=1)
+    if np.any(encoded[marker_rows] != 8):
         raise NativeDR200FormatError(
             "DR200 pacemaker marker is not aligned across all three channels"
         )
@@ -258,15 +245,7 @@ def load_native_flash(
     if size == 0:
         raise NativeDR200FormatError(f"DR200 flash.dat is empty: {flash_path}")
 
-    metadata, data_block_count = _inspect_native_flash(flash_path)
-    try:
-        sample_rate = float(metadata["SampleRate"])
-    except (KeyError, ValueError):
-        raise NativeDR200FormatError("DR200 flash.dat has an invalid SampleRate") from None
-    if sample_rate != DR200_SAMPLE_RATE:
-        raise NativeDR200FormatError(
-            f"Unsupported DR200 sample rate {sample_rate:g} Hz; expected 180 Hz"
-        )
+    data_block_count, start_time = _inspect_native_flash(flash_path)
 
     samples = np.empty(data_block_count * _SAMPLES_PER_BLOCK, dtype=np.float64)
     cursor = 0
@@ -288,7 +267,7 @@ def load_native_flash(
     samples_mv = reconstructed * DR200_MILLIVOLTS_PER_COUNT
     return Recording(
         samples=samples_mv,
-        sample_rate=sample_rate,
-        start_time=_read_start_time(metadata),
+        sample_rate=DR200_SAMPLE_RATE,
+        start_time=start_time,
         source=source if source is not None else str(flash_path),
     )

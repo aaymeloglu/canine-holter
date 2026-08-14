@@ -1,6 +1,5 @@
 """Recording format detection and shared ingestion entry point."""
 
-import re
 from pathlib import Path
 
 from canine_holter.ingest.dr200 import load_decoded_channel, load_native_flash
@@ -8,7 +7,7 @@ from canine_holter.ingest.wfdb_loader import load_local_record
 from canine_holter.types import Recording
 
 
-_DR200_CHANNEL_NAME = re.compile(r"flashc[0-2]\.dat", re.IGNORECASE)
+_DR200_CHANNEL_NAMES = {"flashc0.dat", "flashc1.dat", "flashc2.dat"}
 
 
 def load_recording(input_path: str) -> Recording:
@@ -26,7 +25,7 @@ def load_recording(input_path: str) -> Recording:
         record_path = str(path.with_suffix(""))
         return load_local_record(record_path, source=record_path)
 
-    if suffix == ".raw" or _DR200_CHANNEL_NAME.fullmatch(path.name):
+    if suffix == ".raw" or path.name.casefold() in _DR200_CHANNEL_NAMES:
         return load_decoded_channel(path)
 
     if path.name.casefold() == "flash.dat":
