@@ -9,7 +9,13 @@ def main() -> None:
         prog="canine-holter",
         description="Analyze a Holter ECG recording for PVC burden and arrhythmias.",
     )
-    parser.add_argument("input", help="Path to a local WFDB record (base path, no extension)")
+    parser.add_argument(
+        "input",
+        help=(
+            "WFDB record (.hea or base path), native DR200 flash.dat, or decoded "
+            "DR200 channel (flashc0.dat/flashc1.dat/flashc2.dat/.raw)"
+        ),
+    )
     parser.add_argument("--out", required=True, help="Output directory for the report")
     parser.add_argument(
         "--dog-weight-class",

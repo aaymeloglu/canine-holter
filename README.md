@@ -10,14 +10,16 @@ Started after our Doberman (Teeny) had a seizure-like episode with no clear diag
 
 ## Status
 
-v1: rules-based PVC detection, tested against MIT-BIH (human) and PhysioZoo (canine, no PVC labels) data. DR200-native file support isn't built yet - see `docs/superpowers/specs/2026-08-13-pvc-detection-design.md` for why and what's blocking it.
+v1: rules-based PVC detection, tested against MIT-BIH (human) and PhysioZoo (canine, no PVC labels) data. Native DR200 `flash.dat` ingestion supports the recorder's three-channel, 180 Hz `SampleStorageFormat=1` data, and vendor-extracted `flashc0.dat` through `flashc2.dat` channels are also supported. See [DR200 format research](docs/dr200-format.md) for the format evidence and current limits.
 
 ## Usage
 
 ```bash
 pip install -e ".[dev]"
-canine-holter path/to/recording --out report/
+canine-holter /Volumes/DR200/flash.dat --out report/
 ```
+
+The input can also be a WFDB record or a vendor-extracted DR200 channel such as `flashc0.dat`.
 
 Or launch the GUI: `python -m canine_holter.gui.app` (or download the signed `.app` from [Releases](https://github.com/aaymeloglu/canine-holter/releases)).
 

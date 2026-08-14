@@ -1,4 +1,3 @@
-import os
 import subprocess
 import sys
 import tkinter as tk
@@ -32,16 +31,22 @@ def _open_in_default_app(path: str) -> None:
 
 
 def _on_pick_file() -> None:
-    input_path = filedialog.askopenfilename(title="Select a Holter recording (.hea file)")
+    input_path = filedialog.askopenfilename(
+        title="Select a Holter recording",
+        filetypes=[
+            ("Supported recordings", "*.hea *.dat *.raw"),
+            ("WFDB headers", "*.hea"),
+            ("DR200 decoded channels", "*.dat *.raw"),
+            ("All files", "*"),
+        ],
+    )
     if not input_path:
         return
-    # WFDB records are referenced by their base path (no extension)
-    base_path = os.path.splitext(input_path)[0]
     out_dir = filedialog.askdirectory(title="Select an output folder for the report")
     if not out_dir:
         return
 
-    result = analyze_and_report(base_path, out_dir)
+    result = analyze_and_report(input_path, out_dir)
     if result.success:
         messagebox.showinfo("Done", f"Report written to {result.report_path}")
         _open_in_default_app(result.report_path)
