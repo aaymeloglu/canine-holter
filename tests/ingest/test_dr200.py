@@ -140,6 +140,27 @@ def test_loads_native_flash_delta_encoding_and_metadata(tmp_path):
     np.testing.assert_allclose(rec.samples[:5], [0.0375, 0.0, 0.2625, 0.0, 0.0])
 
 
+def test_native_flash_decodes_full_delta_table_against_unpackdc_ground_truth(tmp_path):
+    # Golden vector: this exercises every difference-table entry (nibble codes
+    # 1-7 for the positive deltas, 15..9 for the negative ones), written as
+    # literal nibble codes rather than via the _DELTA_CODES helper, so it is
+    # not circular with either the helper or the production table. The expected
+    # per-sample counts were confirmed byte-for-byte against NorthEast's own
+    # unpackdc decoder (mode 0) on the same nibble stream - in particular the
+    # large +38/+70 jumps that make a real QRS decodable and that a naive
+    # signed-4-bit model gets wrong. A regression in any table entry fails here.
+    codes = [1, 2, 3, 4, 5, 6, 7, 15, 14, 13, 12, 11, 10, 9]
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    encoded[: len(codes), 0] = codes
+    _write_native_flash(tmp_path / "flash.dat", encoded)
+
+    rec = load_native_flash(tmp_path / "flash.dat", channel=0)
+
+    expected_counts = [1, 4, 10, 22, 43, 81, 151, 150, 147, 141, 129, 108, 70, 0]
+    expected_mv = np.array(expected_counts, dtype=float) * 0.0125
+    np.testing.assert_allclose(rec.samples[: len(codes)], expected_mv)
+
+
 def test_native_flash_interpolates_simultaneous_pacemaker_marker(tmp_path):
     path = tmp_path / "flash.dat"
     encoded = np.zeros((304, 3), dtype=np.uint8)
