@@ -95,3 +95,19 @@ def test_qrs_width_finds_onset_at_clamped_search_window_start():
     assert duration is not None
     onset_index, offset_index = 0, 3
     assert duration == (offset_index - onset_index) / sample_rate
+
+
+def test_qrs_width_returns_none_for_zero_energy_peak():
+    # An R-peak sitting on a flat (zero-energy) stretch of the envelope has no
+    # measurable width, so the threshold is meaningless and width is undefined.
+    envelope = np.zeros(50)
+    assert _qrs_width(envelope, r_peak=25, search_half=20, sample_rate=180.0) is None
+
+
+def test_qrs_width_returns_none_when_envelope_never_drops_below_threshold():
+    # A monotonically rising envelope that stays above the threshold on both
+    # sides of the peak within the search window yields no onset/offset
+    # crossing, so no width can be measured.
+    envelope = np.arange(1, 51, dtype=float)
+    r_peak = 49  # the peak is the maximum; nothing to its right, left stays high
+    assert _qrs_width(envelope, r_peak=r_peak, search_half=3, sample_rate=180.0) is None
