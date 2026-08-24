@@ -133,9 +133,52 @@ def test_plot_strip_clamps_near_start_without_wraparound(monkeypatch):
             sample_rate,
             center_time=0.5,  # near the start; half-window is 3s
             out_path=os.path.join(out_dir, "strip.png"),
+            title="strip",
         )
 
     ydata = captured["ydata"]
     assert len(ydata) > 0
     assert 1.0 in ydata  # the near-start signal should be included
     assert -1.0 not in ydata  # must not wrap around and pull in end-of-recording data
+
+
+# --- wall-clock labels -------------------------------------------------------
+from datetime import datetime
+from canine_holter.report.generate import format_time
+
+
+def test_format_time_with_start_gives_wall_clock_and_elapsed():
+    start = datetime(2026, 8, 23, 15, 33, 8)
+    assert format_time(8232.8, start) == "17:50:20 (t=8232.8s)"
+
+
+def test_format_time_without_start_gives_elapsed_only():
+    assert format_time(8232.8, None) == "t=8232.8s"
+
+
+def test_report_summary_includes_start_and_duration():
+    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(150.0, 0.8, "N")]
+    summary = summarize(beats)
+    start = datetime(2026, 8, 23, 15, 33, 8)
+    with tempfile.TemporaryDirectory() as out_dir:
+        path = write_report(beats, summary, out_dir, samples=None, sample_rate=None, start_time=start)
+        content = open(path).read()
+        assert "- Recording start: 2026-08-23 15:33:08" in content
+        assert "- Duration: 0h 2m" in content
+
+
+def test_report_summary_without_start_says_unknown():
+    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N")]
+    summary = summarize(beats)
+    with tempfile.TemporaryDirectory() as out_dir:
+        path = write_report(beats, summary, out_dir, samples=None, sample_rate=None)
+        assert "- Recording start: unknown" in open(path).read()
+
+
+def test_flagged_event_uses_wall_clock_label_when_start_known():
+    beats = [_beat(0.0, None, "N")] + [_beat(i * 0.8, 0.8, "V") for i in range(1, 3)]
+    summary = summarize(beats)
+    start = datetime(2026, 8, 23, 15, 33, 8)
+    with tempfile.TemporaryDirectory() as out_dir:
+        path = write_report(beats, summary, out_dir, samples=None, sample_rate=None, start_time=start)
+        assert "Event 1: 2 consecutive PVCs at ~15:33:09 (t=1.2s)" in open(path).read()
