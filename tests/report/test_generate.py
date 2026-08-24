@@ -193,3 +193,20 @@ def test_report_links_timeline_png():
         assert "## Timeline" in content
         assert "![timeline](timeline.png)" in content
         assert os.path.exists(os.path.join(out_dir, "timeline.png"))
+
+
+def test_summary_lines_match_markdown_summary_block():
+    from canine_holter.report.generate import _summary_lines
+
+    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N")]
+    summary = summarize(beats)
+    start = datetime(2026, 8, 23, 15, 33, 8)
+    lines = _summary_lines(summary, start, duration_sec=0.8)
+    assert lines[0] == "- Recording start: 2026-08-23 15:33:08"
+    assert lines[1] == "- Duration: 0h 0m"
+    assert "- Total beats: 2" in lines
+    with tempfile.TemporaryDirectory() as out_dir:
+        write_report(beats, summary, out_dir, samples=None, sample_rate=None, start_time=start)
+        content = open(os.path.join(out_dir, "report.md")).read()
+    for line in lines:
+        assert line in content

@@ -9,6 +9,8 @@ from canine_holter.arrhythmia.burden import ArrhythmiaSummary, pvc_runs
 from canine_holter.report.timeline import plot_timeline
 
 STRIP_WINDOW_SEC = 6.0  # seconds of context shown around each flagged run
+REPORT_TITLE = "# Holter Analysis Report"
+DISCLAIMER = "This is a screening aid, not a diagnosis. Review with a veterinary cardiologist."
 
 
 def format_time(elapsed_sec: float, start_time: datetime | None) -> str:
@@ -29,22 +31,45 @@ def _flagged_runs(beats: list[Beat]) -> list[list[Beat]]:
     return [run for run in pvc_runs(beats) if len(run) >= 2]
 
 
-def _plot_strip(
-    samples: np.ndarray, sample_rate: float, center_time: float, out_path: str, title: str
-) -> None:
+def _draw_strip(ax, samples: np.ndarray, sample_rate: float, center_time: float) -> None:
+    """Draw STRIP_WINDOW_SEC of waveform centred on center_time into ax."""
     half_window = STRIP_WINDOW_SEC / 2
     start_sample = max(0, int((center_time - half_window) * sample_rate))
     end_sample = min(len(samples), int((center_time + half_window) * sample_rate))
     segment = samples[start_sample:end_sample]
     t = np.arange(len(segment)) / sample_rate
-
-    fig, ax = plt.subplots(figsize=(10, 3))
     ax.plot(t, segment, linewidth=0.8)
-    ax.set_title(title)
     ax.set_xlabel("seconds")
+
+
+def _plot_strip(
+    samples: np.ndarray, sample_rate: float, center_time: float, out_path: str, title: str
+) -> None:
+    fig, ax = plt.subplots(figsize=(10, 3))
+    _draw_strip(ax, samples, sample_rate, center_time)
+    ax.set_title(title)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
+
+
+def _summary_lines(summary: ArrhythmiaSummary, start_time: datetime | None, duration_sec: float) -> list[str]:
+    """The Summary bullet lines, shared by the markdown and the PDF."""
+    hours, rem = divmod(int(duration_sec), 3600)
+    start_text = start_time.strftime("%Y-%m-%d %H:%M:%S") if start_time else "unknown"
+    return [
+        f"- Recording start: {start_text}",
+        f"- Duration: {hours}h {rem // 60}m",
+        f"- Total beats: {summary.total_beats}",
+        f"- PVC count: {summary.pvc_count}",
+        f"- PVC burden: {summary.pvc_burden_pct:.2f}%",
+        f"- Couplets: {summary.couplets}",
+        f"- Triplets: {summary.triplets}",
+        f"- VT runs (4+ consecutive PVCs): {summary.vtach_runs}",
+        f"- Pauses (>= threshold): {len(summary.pauses)}",
+        f"- Sustained bradycardia events: {len(summary.bradycardia_events)}",
+        f"- Sustained tachycardia events: {len(summary.tachycardia_events)}",
+    ]
 
 
 def write_report(
@@ -66,26 +91,15 @@ def write_report(
     # path (no samples on the report-only path); it is within seconds of the
     # true end.
     duration_sec = beats[-1].time if beats else 0.0
-    hours, rem = divmod(int(duration_sec), 3600)
-    start_text = start_time.strftime("%Y-%m-%d %H:%M:%S") if start_time else "unknown"
+    summary_lines = _summary_lines(summary, start_time, duration_sec)
 
     lines = [
-        "# Holter Analysis Report",
+        REPORT_TITLE,
         "",
-        "**This is a screening aid, not a diagnosis. Review with a veterinary cardiologist.**",
+        f"**{DISCLAIMER}**",
         "",
         "## Summary",
-        f"- Recording start: {start_text}",
-        f"- Duration: {hours}h {rem // 60}m",
-        f"- Total beats: {summary.total_beats}",
-        f"- PVC count: {summary.pvc_count}",
-        f"- PVC burden: {summary.pvc_burden_pct:.2f}%",
-        f"- Couplets: {summary.couplets}",
-        f"- Triplets: {summary.triplets}",
-        f"- VT runs (4+ consecutive PVCs): {summary.vtach_runs}",
-        f"- Pauses (>= threshold): {len(summary.pauses)}",
-        f"- Sustained bradycardia events: {len(summary.bradycardia_events)}",
-        f"- Sustained tachycardia events: {len(summary.tachycardia_events)}",
+        *summary_lines,
         "",
     ]
 
