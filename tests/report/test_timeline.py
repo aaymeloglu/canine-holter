@@ -45,3 +45,35 @@ def test_renders_without_start_time():
 
 def test_renders_with_no_events_and_no_beats():
     _render([], _summary(), None)
+
+
+def test_heart_rate_trend_bins_by_minute_and_leaves_sparse_bins_as_gaps():
+    from canine_holter.report.timeline import _heart_rate_trend
+    import numpy as np
+
+    # 75 bpm steady for the first minute, nothing in minute 2, one lone beat
+    # in minute 3 (too few RR intervals to call a rate).
+    beats = [_beat(i * 0.8, 0.8 if i else None, "N") for i in range(75)]
+    beats.append(_beat(150.0, 0.8, "N"))
+    centers, bpm = _heart_rate_trend(beats)
+    assert list(centers) == [30.0, 90.0, 150.0]
+    assert bpm[0] == 75.0
+    assert np.isnan(bpm[1]) and np.isnan(bpm[2])
+
+
+def test_single_bin_recording_draws_a_visible_point(monkeypatch):
+    """A recording shorter than one HR bin yields one trend point; a bare
+    line through one point renders nothing, so it must carry a marker."""
+    import matplotlib.pyplot as plt
+
+    captured = {}
+    orig_close = plt.close
+
+    def capture_then_close(fig):
+        captured["marker"] = fig.axes[0].lines[0].get_marker()
+        orig_close(fig)
+
+    monkeypatch.setattr(plt, "close", capture_then_close)
+    beats = [_beat(i * 0.8, 0.8 if i else None, "N") for i in range(50)]
+    _render(beats, _summary(), None)
+    assert captured["marker"] not in (None, "None", "")

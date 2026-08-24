@@ -66,7 +66,9 @@ def plot_timeline(
     )
 
     centers, bpm = _heart_rate_trend(beats)
-    ax_hr.plot([to_x(c) for c in centers], bpm, color=HR_COLOR, linewidth=1.5)
+    # A line through a single point draws nothing; give short recordings a dot.
+    marker = "o" if np.count_nonzero(~np.isnan(bpm)) == 1 else None
+    ax_hr.plot([to_x(c) for c in centers], bpm, color=HR_COLOR, linewidth=1.5, marker=marker)
     ax_hr.set_ylabel("Heart rate (bpm)")
     ax_hr.set_title("Recording timeline")
     ax_hr.grid(axis="y", color=GRID_COLOR, linewidth=0.8)
@@ -98,6 +100,7 @@ def plot_timeline(
     if start_time is None:
         ax_ev.set_xlabel("minutes from start")
     else:
+        ax_ev.xaxis.set_major_locator(mdates.MinuteLocator(byminute=(0, 30)))
         ax_ev.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax_ev.set_xlabel("time of day")
 
