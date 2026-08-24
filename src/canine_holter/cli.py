@@ -1,7 +1,7 @@
 # src/canine_holter/cli.py
 import argparse
 import sys
-from canine_holter.pipeline import run_analysis
+from canine_holter.pipeline import StartTimeError, run_analysis
 
 
 def main() -> None:
@@ -23,9 +23,25 @@ def main() -> None:
         default="medium",
         help="Selects brady/tachycardia thresholds (default: medium)",
     )
+    parser.add_argument(
+        "--start-time",
+        help=(
+            "Override the recording start time when the recorder's clock is wrong: "
+            "HH:MM, HH:MM:SS, or 'YYYY-MM-DD HH:MM[:SS]'. Time-only values keep the "
+            "recording's own date."
+        ),
+    )
     args = parser.parse_args()
 
-    report_path = run_analysis(args.input, args.out, dog_weight_class=args.dog_weight_class)
+    try:
+        report_path = run_analysis(
+            args.input,
+            args.out,
+            dog_weight_class=args.dog_weight_class,
+            start_time=args.start_time,
+        )
+    except StartTimeError as exc:
+        parser.error(f"--start-time: {exc}")
     print(f"Report written to {report_path}")
 
 

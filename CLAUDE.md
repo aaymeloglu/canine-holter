@@ -21,7 +21,7 @@ ingest → detection → classify → arrhythmia → report
 - `detection/detect.py` - `detect_beats()`: R-peak detection (NeuroKit2) + QRS width via a custom energy-envelope method, returns a list of unlabeled `Beat`s.
 - `classify/rules.py` - `classify_beats()`: rules-based PVC labeling. A beat is "V" only if BOTH premature (short RR vs. a causal rolling baseline) AND wide (long QRS vs. baseline). This module is deliberately isolated behind `Beat in, labeled Beat out` so a learned model could replace it later without touching anything else.
 - `arrhythmia/burden.py` - `summarize()`: aggregates labeled beats into an `ArrhythmiaSummary` (PVC burden %, couplet/triplet/VT-run counts, sustained brady/tachy events, pauses).
-- `report/generate.py` - `write_report()`: markdown summary + matplotlib rhythm-strip PNGs for flagged multi-beat runs.
+- `report/generate.py` - `write_report()`: markdown summary (event times as wall-clock labels when `Recording.start_time` is known) + matplotlib rhythm-strip PNGs for flagged multi-beat runs. `report/timeline.py` - `plot_timeline()`: whole-recording heart-rate trend over PVC/pause/brady/tachy event lanes, drawn from beats + summary only.
 - `pipeline.py` / `cli.py` / `gui/app.py` - `run_analysis()` wires the stages; the CLI and the Tkinter GUI both call it. The GUI is the artifact non-technical users run (see Packaging).
 
 **The boundary contract is the most important design property here.** The classifier is swappable and `ingest` grows new formats precisely because modules only exchange `Recording`/`Beat`/`ArrhythmiaSummary`. Keep it that way: no module should import another's private helpers, and `detect`/`classify`/etc. must stay format-agnostic (they only ever see samples + a sample rate, then time + RR + QRS).
@@ -63,7 +63,7 @@ The DR200 writes NorthEast Monitoring's proprietary `flash.dat` to the SD card. 
 pip install -e ".[dev]"          # install with test/build deps
 pytest                            # full suite
 pytest --cov=canine_holter --cov-report=term-missing   # coverage (needs pytest-cov)
-canine-holter <input> --out report/                    # CLI
+canine-holter <input> --out report/ [--start-time HH:MM]  # CLI
 python -m canine_holter.gui.app                         # GUI
 ```
 
