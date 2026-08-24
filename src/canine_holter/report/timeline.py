@@ -7,6 +7,9 @@ matplotlib.use("Agg")  # no display needed - this runs headless in CLI/CI
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from matplotlib.gridspec import GridSpec, SubplotSpec
 from canine_holter.arrhythmia.burden import ArrhythmiaSummary
 from canine_holter.types import Beat
 
@@ -66,15 +69,17 @@ def _heart_rate_trend(beats: list[Beat]) -> tuple[np.ndarray, np.ndarray]:
     return centers, bpm
 
 
-def plot_timeline(
+def draw_timeline(
+    fig: Figure,
+    subplot_spec: SubplotSpec,
     beats: list[Beat],
     summary: ArrhythmiaSummary,
     start_time: datetime | None,
-    out_path: str,
-) -> None:
-    """Write a two-panel PNG: heart rate over the recording on top, event
-    lanes below. X-axis is time of day when start_time is known, otherwise
-    minutes from the start of the recording."""
+) -> tuple[Axes, Axes]:
+    """Draw the two-panel timeline (heart rate above, event lanes below)
+    into a region of an existing figure and return the two axes. X-axis is
+    time of day when start_time is known, otherwise minutes from the start
+    of the recording."""
     if start_time is None:
         to_x = lambda sec: sec / 60.0  # noqa: E731
         to_width = lambda sec: sec / 60.0  # noqa: E731
@@ -82,9 +87,10 @@ def plot_timeline(
         to_x = lambda sec: mdates.date2num(start_time + timedelta(seconds=float(sec)))  # noqa: E731
         to_width = lambda sec: sec / 86400.0  # noqa: E731  (matplotlib date units are days)
 
-    fig, (ax_hr, ax_ev) = plt.subplots(
-        2, 1, figsize=(12, 5), sharex=True, gridspec_kw={"height_ratios": [2, 1.4]}
-    )
+    inner = subplot_spec.subgridspec(2, 1, height_ratios=[2, 1.4], hspace=0.15)
+    ax_hr = fig.add_subplot(inner[0])
+    ax_ev = fig.add_subplot(inner[1], sharex=ax_hr)
+    ax_hr.tick_params(labelbottom=False)
 
     centers, bpm = _heart_rate_trend(beats)
     # A line through a single point draws nothing; give short recordings a dot.
@@ -135,7 +141,18 @@ def plot_timeline(
         ax_ev.xaxis.set_major_locator(locator)
         ax_ev.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax_ev.set_xlabel("time of day")
+    return ax_hr, ax_ev
 
+
+def plot_timeline(
+    beats: list[Beat],
+    summary: ArrhythmiaSummary,
+    start_time: datetime | None,
+    out_path: str,
+) -> None:
+    """Write the timeline as a standalone PNG."""
+    fig = plt.figure(figsize=(12, 5))
+    draw_timeline(fig, GridSpec(1, 1, figure=fig)[0], beats, summary, start_time)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
