@@ -19,3 +19,19 @@ def test_no_mark_times_draws_only_the_waveform():
     draw_strip(ax, np.zeros(2000), 100.0, center_time=10.0)
     assert len(ax.lines) == 1
     plt.close(fig)
+
+
+def test_draw_strip_clamps_near_start_without_wraparound():
+    """For an event within half a window of the start, (center_time -
+    half_window) * sample_rate goes negative; unclamped, Python would slice
+    from the end. Verify the strip starts at sample 0 and pulls in no tail."""
+    samples = np.zeros(1000)
+    samples[:50] = 1.0
+    samples[-50:] = -1.0
+    fig, ax = plt.subplots()
+    draw_strip(ax, samples, 100.0, center_time=0.5)
+    ydata = ax.lines[0].get_ydata()
+    assert len(ydata) > 0
+    assert 1.0 in ydata
+    assert -1.0 not in ydata
+    plt.close(fig)

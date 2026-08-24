@@ -5,11 +5,10 @@ from datetime import datetime, timedelta
 import matplotlib
 matplotlib.use("Agg")  # no display needed - this runs headless in CLI/CI
 import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from matplotlib.gridspec import GridSpec, SubplotSpec
+from matplotlib.gridspec import SubplotSpec
 from canine_holter.arrhythmia.burden import ArrhythmiaSummary
 from canine_holter.types import Beat
 
@@ -142,17 +141,3 @@ def draw_timeline(
         ax_ev.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax_ev.set_xlabel("time of day")
     return ax_hr, ax_ev
-
-
-def plot_timeline(
-    beats: list[Beat],
-    summary: ArrhythmiaSummary,
-    start_time: datetime | None,
-    out_path: str,
-) -> None:
-    """Write the timeline as a standalone PNG."""
-    fig = plt.figure(figsize=(12, 5))
-    draw_timeline(fig, GridSpec(1, 1, figure=fig)[0], beats, summary, start_time)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
-    plt.close(fig)

@@ -1,7 +1,9 @@
-"""Single-file PDF report: summary, reference ranges, and timeline on page
-1, then rhythm strips for flagged events and isolated PVCs on the pages
-after (or, with no waveform, one text page per section)."""
+"""Renders ReportContent as the PDF: summary, reference ranges, and
+timeline on page 1, then rhythm strips per section on the pages after (or,
+with no waveform, one text page per section)."""
+from __future__ import annotations
 from datetime import datetime
+from typing import TYPE_CHECKING
 import matplotlib
 matplotlib.use("Agg")  # no display needed - this runs headless in CLI/CI
 import matplotlib.pyplot as plt
@@ -10,23 +12,13 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from canine_holter.arrhythmia.burden import ArrhythmiaSummary
-from canine_holter.report.common import (
-    DISCLAIMER,
-    EVENTS_TITLE,
-    ISOLATED_TITLE,
-    MAX_STRIPS_PER_SECTION,
-    REPORT_TITLE,
-    event_line,
-    flagged_runs,
-    isolated_pvcs,
-    pvc_line,
-    run_center_time,
-    section_heading,
-    select_evenly,
-)
+from canine_holter.report.common import DISCLAIMER, REPORT_TITLE, run_center_time
 from canine_holter.report.strip import draw_strip
 from canine_holter.report.timeline import draw_timeline
 from canine_holter.types import Beat
+
+if TYPE_CHECKING:  # generate imports pdf; only the type is needed here
+    from canine_holter.report.generate import ReportContent, StripSection
 
 PAGE_SIZE_IN = (8.5, 11)  # US Letter, portrait
 STRIPS_PER_PAGE = 3
@@ -91,20 +83,17 @@ def _text_page(heading: str, lines: list[str]) -> Figure:
     return fig
 
 
-def _write_section(pdf, title, runs, labeler, start_time, samples, sample_rate) -> None:
-    if not runs:
-        return
-    shown = select_evenly(runs, MAX_STRIPS_PER_SECTION)
-    heading = section_heading(title, len(shown), len(runs))
-    labels = [labeler(i, run, start_time) for i, run in enumerate(shown)]
+def _write_section(pdf, section: StripSection, samples, sample_rate) -> None:
     if samples is None or sample_rate is None:
-        fig = _text_page(heading, labels)
+        fig = _text_page(section.heading, section.labels)
         pdf.savefig(fig)
         plt.close(fig)
         return
-    for start in range(0, len(shown), STRIPS_PER_PAGE):
+    for start in range(0, len(section.runs), STRIPS_PER_PAGE):
         stop = start + STRIPS_PER_PAGE
-        fig = _strip_page(heading, shown[start:stop], labels[start:stop], samples, sample_rate)
+        fig = _strip_page(
+            section.heading, section.runs[start:stop], section.labels[start:stop], samples, sample_rate
+        )
         pdf.savefig(fig)
         plt.close(fig)
 
@@ -112,8 +101,7 @@ def _write_section(pdf, title, runs, labeler, start_time, samples, sample_rate) 
 def write_pdf(
     out_path: str,
     *,
-    summary_lines: list[str],
-    reference_lines: list[str],
+    content: ReportContent,
     beats: list[Beat],
     summary: ArrhythmiaSummary,
     start_time: datetime | None,
@@ -123,8 +111,8 @@ def write_pdf(
     """Write the multi-page PDF report. With no waveform samples each
     section's events are listed as text on a page of their own."""
     with PdfPages(out_path) as pdf:
-        fig = _summary_page(summary_lines, reference_lines, beats, summary, start_time)
+        fig = _summary_page(content.summary_lines, content.reference_lines, beats, summary, start_time)
         pdf.savefig(fig)
         plt.close(fig)
-        _write_section(pdf, EVENTS_TITLE, flagged_runs(beats), event_line, start_time, samples, sample_rate)
-        _write_section(pdf, ISOLATED_TITLE, isolated_pvcs(beats), pvc_line, start_time, samples, sample_rate)
+        for section in content.sections:
+            _write_section(pdf, section, samples, sample_rate)

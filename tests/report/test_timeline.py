@@ -3,7 +3,11 @@ import tempfile
 from datetime import datetime
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import ArrhythmiaSummary
-from canine_holter.report.timeline import plot_timeline
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+from canine_holter.report.timeline import draw_timeline
 
 
 def _beat(time, rr, label):
@@ -20,10 +24,13 @@ def _summary(**kw):
 
 
 def _render(beats, summary, start_time):
+    fig = plt.figure(figsize=(12, 5))
+    draw_timeline(fig, GridSpec(1, 1, figure=fig)[0], beats, summary, start_time)
     with tempfile.TemporaryDirectory() as out_dir:
         out = os.path.join(out_dir, "timeline.png")
-        plot_timeline(beats, summary, start_time, out)
+        fig.savefig(out)
         assert os.path.getsize(out) > 0
+    plt.close(fig)
 
 
 def test_renders_with_every_event_type_and_wall_clock():

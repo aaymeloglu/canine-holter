@@ -5,6 +5,7 @@ from datetime import datetime
 import numpy as np
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import summarize
+from canine_holter.report.generate import build_content
 from canine_holter.report.pdf import write_pdf
 
 
@@ -32,13 +33,13 @@ def _write(n_runs, samples=True):
     sig = np.sin(np.linspace(0, 2000, 160 * 100)) if samples else None
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "report.pdf")
+        start = datetime(2026, 8, 23, 15, 33, 8)
         write_pdf(
             out,
-            summary_lines=["- Total beats: 200"],
-            reference_lines=["- under 50 ..."],
+            content=build_content(beats, summary, start),
             beats=beats,
             summary=summary,
-            start_time=datetime(2026, 8, 23, 15, 33, 8),
+            start_time=start,
             samples=sig,
             sample_rate=100.0 if samples else None,
         )
@@ -79,8 +80,7 @@ def _write_isolated(n, samples=True):
         out = os.path.join(d, "report.pdf")
         write_pdf(
             out,
-            summary_lines=["- Total beats: 200"],
-            reference_lines=["- under 50 ..."],
+            content=build_content(beats, summary, None),
             beats=beats,
             summary=summary,
             start_time=None,
