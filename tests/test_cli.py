@@ -14,8 +14,9 @@ def test_main_runs_end_to_end_and_prints_report_path(monkeypatch, capsys):
         monkeypatch.setattr(sys, "argv", ["canine-holter", INPUT_PATH, "--out", out_dir])
         main()
 
-        report_path = os.path.join(out_dir, "report.md")
+        report_path = os.path.join(out_dir, "report.pdf")
         assert os.path.exists(report_path)
+        assert os.path.exists(os.path.join(out_dir, "report.md"))
 
         captured = capsys.readouterr()
         assert captured.out.strip() == f"Report written to {report_path}"

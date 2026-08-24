@@ -1,52 +1,29 @@
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 import matplotlib
 matplotlib.use("Agg")  # no display needed - this runs headless in CLI/CI
 import matplotlib.pyplot as plt
 import numpy as np
 from canine_holter.types import Beat
-from canine_holter.arrhythmia.burden import ArrhythmiaSummary, pvc_runs
+from canine_holter.arrhythmia.burden import ArrhythmiaSummary
+from canine_holter.report.common import (
+    DISCLAIMER,
+    REPORT_TITLE,
+    event_line,
+    flagged_runs,
+    format_time,
+    run_center_time,
+)
+from canine_holter.report.pdf import write_pdf
+from canine_holter.report.strip import draw_strip
 from canine_holter.report.timeline import plot_timeline
-
-STRIP_WINDOW_SEC = 6.0  # seconds of context shown around each flagged run
-REPORT_TITLE = "# Holter Analysis Report"
-DISCLAIMER = "This is a screening aid, not a diagnosis. Review with a veterinary cardiologist."
-
-
-def format_time(elapsed_sec: float, start_time: datetime | None) -> str:
-    """Render an elapsed-seconds offset as a wall-clock label when the
-    recording start is known, falling back to elapsed seconds otherwise."""
-    elapsed = f"t={elapsed_sec:.1f}s"
-    if start_time is None:
-        return elapsed
-    clock = (start_time + timedelta(seconds=elapsed_sec)).strftime("%H:%M:%S")
-    return f"{clock} ({elapsed})"
-
-
-def _flagged_runs(beats: list[Beat]) -> list[list[Beat]]:
-    """PVC runs of 2+ beats (couplets, triplets, VT runs) - the events worth
-    a rhythm-strip plot. Isolated single PVCs are counted in the summary
-    stats but not individually plotted, to avoid an unbounded number of
-    plots on a high-burden recording."""
-    return [run for run in pvc_runs(beats) if len(run) >= 2]
-
-
-def _draw_strip(ax, samples: np.ndarray, sample_rate: float, center_time: float) -> None:
-    """Draw STRIP_WINDOW_SEC of waveform centred on center_time into ax."""
-    half_window = STRIP_WINDOW_SEC / 2
-    start_sample = max(0, int((center_time - half_window) * sample_rate))
-    end_sample = min(len(samples), int((center_time + half_window) * sample_rate))
-    segment = samples[start_sample:end_sample]
-    t = np.arange(len(segment)) / sample_rate
-    ax.plot(t, segment, linewidth=0.8)
-    ax.set_xlabel("seconds")
 
 
 def _plot_strip(
     samples: np.ndarray, sample_rate: float, center_time: float, out_path: str, title: str
 ) -> None:
     fig, ax = plt.subplots(figsize=(10, 3))
-    _draw_strip(ax, samples, sample_rate, center_time)
+    draw_strip(ax, samples, sample_rate, center_time)
     ax.set_title(title)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
@@ -80,11 +57,11 @@ def write_report(
     sample_rate: float | None,
     start_time: datetime | None = None,
 ) -> str:
-    """Write a markdown summary report, a whole-recording timeline PNG, and
-    (if waveform data is provided) rhythm-strip PNGs for each flagged
-    multi-beat PVC run. Event times are
-    given as wall-clock labels when start_time is known. Returns the path
-    to the markdown report."""
+    """Write the report: report.pdf (the primary artifact - summary text,
+    timeline, and rhythm strips in one file), plus report.md, timeline.png,
+    and (if waveform data is provided) a strip PNG per flagged multi-beat
+    PVC run. Event times are wall-clock labels when start_time is known.
+    Returns the path to the PDF."""
     os.makedirs(out_dir, exist_ok=True)
 
     # The last beat is the only end-of-recording marker available on every
@@ -94,7 +71,7 @@ def write_report(
     summary_lines = _summary_lines(summary, start_time, duration_sec)
 
     lines = [
-        REPORT_TITLE,
+        f"# {REPORT_TITLE}",
         "",
         f"**{DISCLAIMER}**",
         "",
@@ -106,23 +83,29 @@ def write_report(
     plot_timeline(beats, summary, start_time, os.path.join(out_dir, "timeline.png"))
     lines += ["## Timeline", "![timeline](timeline.png)", ""]
 
-    flagged = _flagged_runs(beats)
+    flagged = flagged_runs(beats)
     if flagged:
         lines.append("## Flagged events (couplets, triplets, VT runs)")
         for i, run in enumerate(flagged):
-            center_time = (run[0].time + run[-1].time) / 2
-            label = format_time(center_time, start_time)
-            lines.append(f"- Event {i + 1}: {len(run)} consecutive PVCs at ~{label}")
+            lines.append(f"- {event_line(i, run, start_time)}")
             if samples is not None and sample_rate is not None:
                 plot_path = os.path.join(out_dir, f"event_{i + 1}_strip.png")
-                _plot_strip(
-                    samples, sample_rate, center_time, plot_path, title=f"Rhythm strip around {label}"
-                )
+                title = f"Rhythm strip around {format_time(run_center_time(run), start_time)}"
+                _plot_strip(samples, sample_rate, run_center_time(run), plot_path, title=title)
                 lines.append(f"  ![event {i + 1}]({os.path.basename(plot_path)})")
         lines.append("")
 
-    report_path = os.path.join(out_dir, "report.md")
-    with open(report_path, "w") as f:
+    with open(os.path.join(out_dir, "report.md"), "w") as f:
         f.write("\n".join(lines))
 
-    return report_path
+    pdf_path = os.path.join(out_dir, "report.pdf")
+    write_pdf(
+        pdf_path,
+        summary_lines=summary_lines,
+        beats=beats,
+        summary=summary,
+        start_time=start_time,
+        samples=samples,
+        sample_rate=sample_rate,
+    )
+    return pdf_path
