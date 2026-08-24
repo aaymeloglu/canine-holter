@@ -111,3 +111,72 @@ def test_qrs_width_returns_none_when_envelope_never_drops_below_threshold():
     envelope = np.arange(1, 51, dtype=float)
     r_peak = 49  # the peak is the maximum; nothing to its right, left stays high
     assert _qrs_width(envelope, r_peak=r_peak, search_half=3, sample_rate=180.0) is None
+
+
+# --- phantom-beat rejection ---------------------------------------------------
+# Teeny's first recording (2026-08-23) had 54 of 59 "PVCs" sitting on flat
+# baseline: 0.03-0.11 mV peak-to-peak at the flagged instant vs ~2.9 mV for
+# a real R-wave. The R-peak detector invents beats inside long RR gaps at
+# slow resting rates, and those phantoms cascade into false PVCs. Peaks
+# far below the recording's own median R amplitude are dropped.
+from canine_holter.detection.detect import _reject_low_amplitude_peaks
+
+
+def _pulse_signal(sample_rate, peak_samples, amplitudes, n):
+    """Zeros with a one-sample spike of the given amplitude at each peak."""
+    sig = np.zeros(n)
+    for p, a in zip(peak_samples, amplitudes):
+        sig[p] = a
+    return sig
+
+
+def test_reject_drops_peak_far_below_median_amplitude():
+    sr = 100.0
+    peaks = np.array([100, 200, 250, 300, 400])
+    sig = _pulse_signal(sr, peaks, [2.0, 2.0, 0.05, 2.0, 2.0], 500)
+    kept = _reject_low_amplitude_peaks(sig, peaks, sr)
+    assert kept.tolist() == [100, 200, 300, 400]
+
+
+def test_reject_keeps_every_peak_when_amplitudes_are_uniform():
+    sr = 100.0
+    peaks = np.array([100, 200, 300, 400])
+    sig = _pulse_signal(sr, peaks, [2.0, 2.0, 2.0, 2.0], 500)
+    kept = _reject_low_amplitude_peaks(sig, peaks, sr)
+    assert kept.tolist() == [100, 200, 300, 400]
+
+
+def test_reject_keeps_a_genuinely_smaller_but_real_beat():
+    # A beat at half the median amplitude is a plausible small PVC and must
+    # survive; only peaks under MIN_R_AMPLITUDE_FRACTION (0.2) are phantoms.
+    sr = 100.0
+    peaks = np.array([100, 200, 300, 400])
+    sig = _pulse_signal(sr, peaks, [2.0, 1.0, 2.0, 2.0], 500)
+    kept = _reject_low_amplitude_peaks(sig, peaks, sr)
+    assert kept.tolist() == [100, 200, 300, 400]
+
+
+def test_reject_returns_no_peaks_when_median_amplitude_is_zero():
+    # Every "peak" on flat signal: there is nothing to vouch for, fail closed.
+    sr = 100.0
+    peaks = np.array([100, 200, 300])
+    kept = _reject_low_amplitude_peaks(np.zeros(500), peaks, sr)
+    assert kept.tolist() == []
+
+
+def test_detect_beats_reports_gap_as_one_long_rr_after_dropping_phantom(monkeypatch):
+    # NeuroKit's peak set is pinned so the test is about what detect_beats
+    # does with a phantom, not about whether NeuroKit produces one.
+    import neurokit2 as nk
+    sr = 100.0
+    real = [100, 200, 300, 500, 600]
+    phantom = 400  # inside the 300->500 gap, on baseline
+    sig = _pulse_signal(sr, real, [2.0] * len(real), 700)
+    monkeypatch.setattr(nk, "ecg_clean", lambda s, sampling_rate: s)
+    monkeypatch.setattr(
+        nk, "ecg_peaks",
+        lambda s, sampling_rate: (None, {"ECG_R_Peaks": np.array(sorted(real + [phantom]))}),
+    )
+    beats = detect_beats(sig, sr)
+    assert [b.time for b in beats] == [1.0, 2.0, 3.0, 5.0, 6.0]
+    assert beats[3].rr_interval == 2.0
