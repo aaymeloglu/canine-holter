@@ -57,10 +57,9 @@ def test_report_with_zero_pvc_beats_has_no_flagged_section_and_no_plots():
         assert strip_files == []
 
 
-def test_isolated_single_pvc_is_not_a_flagged_event():
-    """A lone PVC (not part of a run of 2+) is counted in the summary stats
-    but _flagged_runs explicitly excludes it - confirm the report actually
-    honors that filter rather than listing every single PVC as an event."""
+def test_isolated_single_pvc_is_listed_under_isolated_pvcs_not_flagged_events():
+    """A lone PVC (not part of a run of 2+) is not a flagged event, but it
+    is where classifier errors live, so it gets its own section and strip."""
     beats = [
         _beat(0.0, None, "N"),
         _beat(0.8, 0.8, "N"),
@@ -69,12 +68,56 @@ def test_isolated_single_pvc_is_not_a_flagged_event():
     ]
     summary = summarize(beats, dog_weight_class="medium")
     assert summary.pvc_count == 1
+    import numpy as np
 
     with tempfile.TemporaryDirectory() as out_dir:
-        write_report(beats, summary, out_dir, samples=None, sample_rate=None)
+        write_report(beats, summary, out_dir, samples=np.zeros(1000), sample_rate=100.0)
         content = open(os.path.join(out_dir, "report.md")).read()
         assert "Flagged events" not in content
         assert "Event 1" not in content
+        assert "## Isolated PVCs" in content
+        assert "PVC 1: isolated PVC at ~t=1.6s" in content
+        assert "![pvc 1](pvc_1_strip.png)" in content
+        assert os.path.exists(os.path.join(out_dir, "pvc_1_strip.png"))
+
+
+def test_isolated_pvc_strips_are_capped_and_the_heading_says_so():
+    beats = [_beat(0.0, None, "N")]
+    for i in range(1, 61):  # 30 isolated PVCs, each between normals
+        beats.append(_beat(i * 0.8, 0.8, "V" if i % 2 else "N"))
+    summary = summarize(beats)
+    assert summary.pvc_count == 30
+    import numpy as np
+
+    with tempfile.TemporaryDirectory() as out_dir:
+        write_report(beats, summary, out_dir, samples=np.zeros(6000), sample_rate=100.0)
+        content = open(os.path.join(out_dir, "report.md")).read()
+        assert "## Isolated PVCs (24 of 30 shown, evenly spaced through the recording)" in content
+        strips = [f for f in os.listdir(out_dir) if f.startswith("pvc_")]
+        assert len(strips) == 24
+
+
+def test_isolated_pvcs_listed_as_text_without_samples():
+    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "V"), _beat(1.6, 0.8, "N")]
+    summary = summarize(beats)
+    with tempfile.TemporaryDirectory() as out_dir:
+        write_report(beats, summary, out_dir, samples=None, sample_rate=None)
+        content = open(os.path.join(out_dir, "report.md")).read()
+        assert "## Isolated PVCs" in content
+        assert "PVC 1: isolated PVC" in content
+        assert not [f for f in os.listdir(out_dir) if f.startswith("pvc_")]
+
+
+def test_summary_has_longest_pause_and_24h_line_and_reference_section():
+    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(3.77, 2.97, "N")]
+    summary = summarize(beats)
+    with tempfile.TemporaryDirectory() as out_dir:
+        write_report(beats, summary, out_dir, samples=None, sample_rate=None)
+        content = open(os.path.join(out_dir, "report.md")).read()
+        assert "- Longest pause: 2.97 s" in content
+        assert "- PVCs per 24 h: not computed (recording is 0h 0m; needs >= 20 h)" in content
+        assert "## Reference ranges" in content
+        assert "under 50" in content
 
 
 def test_no_plots_written_when_samples_missing_even_with_multibeat_run():

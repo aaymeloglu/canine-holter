@@ -12,6 +12,13 @@ QRS_ENVELOPE_INTEGRATION_SEC = 0.03
 # Envelope must drop below this fraction of its value at the R-peak to
 # mark the QRS onset/offset boundary.
 QRS_WIDTH_THRESHOLD_FRACTION = 0.1
+# Peak-to-peak range within this window of a detected R-peak is its
+# amplitude; a peak under MIN_R_AMPLITUDE_FRACTION of the recording's
+# median R amplitude is a phantom (the detector inventing a beat inside a
+# long RR gap at slow resting rates), not a beat. Real PVCs can be smaller
+# than sinus beats, but not five times smaller on a working electrode.
+R_AMPLITUDE_WINDOW_SEC = 0.06
+MIN_R_AMPLITUDE_FRACTION = 0.2
 
 
 def detect_beats(samples: np.ndarray, sample_rate: float) -> list[Beat]:
@@ -29,7 +36,7 @@ def detect_beats(samples: np.ndarray, sample_rate: float) -> list[Beat]:
     """
     cleaned = nk.ecg_clean(samples, sampling_rate=sample_rate)
     _, r_info = nk.ecg_peaks(cleaned, sampling_rate=sample_rate)
-    r_peaks = r_info["ECG_R_Peaks"]
+    r_peaks = _reject_low_amplitude_peaks(cleaned, r_info["ECG_R_Peaks"], sample_rate)
     if len(r_peaks) < 2:
         return []
 
@@ -45,6 +52,25 @@ def detect_beats(samples: np.ndarray, sample_rate: float) -> list[Beat]:
             Beat(time=time, rr_interval=rr, qrs_duration=qrs_duration, label=None)
         )
     return beats
+
+
+def _reject_low_amplitude_peaks(
+    cleaned: np.ndarray, r_peaks: np.ndarray, sample_rate: float
+) -> np.ndarray:
+    """Drop detected peaks whose local peak-to-peak amplitude is far below
+    the median over all peaks. A zero median means every peak sits on flat
+    signal, so nothing is kept (fail closed)."""
+    r_peaks = np.asarray(r_peaks, dtype=int)
+    if len(r_peaks) == 0:
+        return r_peaks
+    half = int(R_AMPLITUDE_WINDOW_SEC * sample_rate)
+    amplitudes = np.array([
+        cleaned[max(0, r - half): r + half + 1].ptp() for r in r_peaks
+    ])
+    reference = np.median(amplitudes)
+    if reference <= 0:
+        return r_peaks[:0]
+    return r_peaks[amplitudes >= MIN_R_AMPLITUDE_FRACTION * reference]
 
 
 def _qrs_energy_envelope(cleaned: np.ndarray, sample_rate: float) -> np.ndarray:
