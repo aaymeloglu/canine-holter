@@ -21,98 +21,98 @@ def test_analyze_and_report_reports_failure_on_bad_input():
         assert result.error_message
 
 
-# --- _on_pick_file: exercises the dialog-driven branching logic without a
-# real display, by monkeypatching the tkinter dialog/messagebox functions
-# that _on_pick_file calls as module-level names in canine_holter.gui.app.
+# --- Three-step flow: choose recording, choose output folder, run. The
+# state is a plain dataclass and the transitions are module-level functions
+# that call the tkinter dialogs as module-level names, so all of this runs
+# without a display; only the widget construction in main() is untested.
+import os.path
+from canine_holter.gui.app import (
+    AppState,
+    choose_output,
+    choose_recording,
+    output_label_text,
+    recording_label_text,
+    run,
+    status_text,
+)
 
 
-def test_on_pick_file_returns_early_when_file_dialog_cancelled(monkeypatch):
-    events = []
+def test_initial_state_cannot_run_and_prompts_for_both_choices():
+    state = AppState()
+    assert state.can_run is False
+    assert recording_label_text(state) == "No recording chosen"
+    assert output_label_text(state) == "No output folder chosen"
+    assert status_text(state) == "Choose a recording and an output folder, then Run."
 
+
+def test_choose_recording_sets_path_and_label_shows_file_name(monkeypatch):
+    monkeypatch.setattr(gui_app.filedialog, "askopenfilename", lambda **kw: "/Volumes/NO NAME/flash.dat")
+    state = choose_recording(AppState())
+    assert state.recording_path == "/Volumes/NO NAME/flash.dat"
+    assert recording_label_text(state) == "flash.dat"
+
+
+def test_choose_recording_cancel_keeps_previous_choice(monkeypatch):
     # Tkinter's askopenfilename returns "" (not None) when the user cancels.
     monkeypatch.setattr(gui_app.filedialog, "askopenfilename", lambda **kw: "")
-    monkeypatch.setattr(
-        gui_app.filedialog,
-        "askdirectory",
-        lambda **kw: events.append("askdirectory") or "/tmp/should-not-be-used",
-    )
-    monkeypatch.setattr(
-        gui_app, "analyze_and_report", lambda *a, **kw: events.append(("analyze_and_report", a, kw))
-    )
-    monkeypatch.setattr(gui_app.messagebox, "showinfo", lambda *a, **kw: events.append(("showinfo", a)))
-    monkeypatch.setattr(gui_app.messagebox, "showerror", lambda *a, **kw: events.append(("showerror", a)))
-    monkeypatch.setattr(gui_app, "_open_in_default_app", lambda *a, **kw: events.append(("open", a)))
-
-    gui_app._on_pick_file()
-
-    # Cancelling the file picker must short-circuit before the output-folder
-    # dialog, the pipeline, or any result dialog runs.
-    assert events == []
+    before = AppState(recording_path="/r/119.hea")
+    assert choose_recording(before) == before
 
 
-def test_on_pick_file_returns_early_when_output_dir_dialog_cancelled(monkeypatch):
-    events = []
+def test_choose_output_sets_dir_and_label_shows_folder(monkeypatch):
+    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **kw: "/Users/andy/Downloads/teeny")
+    state = choose_output(AppState())
+    assert state.out_dir == "/Users/andy/Downloads/teeny"
+    assert output_label_text(state) == "/Users/andy/Downloads/teeny"
 
-    monkeypatch.setattr(gui_app.filedialog, "askopenfilename", lambda **kw: "/some/record.hea")
-    # Tkinter's askdirectory returns "" (not None) when the user cancels.
+
+def test_choose_output_cancel_keeps_previous_choice(monkeypatch):
     monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **kw: "")
-    monkeypatch.setattr(
-        gui_app, "analyze_and_report", lambda *a, **kw: events.append(("analyze_and_report", a, kw))
-    )
-    monkeypatch.setattr(gui_app.messagebox, "showinfo", lambda *a, **kw: events.append(("showinfo", a)))
-    monkeypatch.setattr(gui_app.messagebox, "showerror", lambda *a, **kw: events.append(("showerror", a)))
-    monkeypatch.setattr(gui_app, "_open_in_default_app", lambda *a, **kw: events.append(("open", a)))
-
-    gui_app._on_pick_file()
-
-    # Cancelling the output-folder picker must short-circuit before the
-    # pipeline runs or any result dialog shows.
-    assert events == []
+    before = AppState(out_dir="/out")
+    assert choose_output(before) == before
 
 
-def test_on_pick_file_success_passes_selected_recording_and_shows_info(monkeypatch):
-    events = []
-    captured_args = {}
+def test_can_run_only_when_both_chosen_and_not_running():
+    assert AppState(recording_path="/r/119.hea").can_run is False
+    assert AppState(out_dir="/out").can_run is False
+    assert AppState(recording_path="/r/119.hea", out_dir="/out").can_run is True
+    assert AppState(recording_path="/r/119.hea", out_dir="/out", running=True).can_run is False
 
-    monkeypatch.setattr(gui_app.filedialog, "askopenfilename", lambda **kw: "/recordings/119.hea")
-    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **kw: "/tmp/out")
+
+def test_status_text_ready_running_done_failed():
+    ready = AppState(recording_path="/r/119.hea", out_dir="/out")
+    assert status_text(ready) == "Ready to run."
+    assert status_text(AppState(recording_path="/r", out_dir="/out", running=True)) == "Analyzing... this can take a minute."
+    done = AppState(recording_path="/r", out_dir="/out",
+                    result=AnalysisResult(success=True, report_path="/out/report.pdf", error_message=None))
+    assert status_text(done) == "Done - report written to /out/report.pdf"
+    failed = AppState(recording_path="/r", out_dir="/out",
+                      result=AnalysisResult(success=False, report_path=None, error_message="boom"))
+    assert status_text(failed) == "Analysis failed: boom"
+
+
+def test_choosing_a_new_recording_clears_a_previous_result(monkeypatch):
+    monkeypatch.setattr(gui_app.filedialog, "askopenfilename", lambda **kw: "/r/other.hea")
+    done = AppState(recording_path="/r/119.hea", out_dir="/out",
+                    result=AnalysisResult(success=True, report_path="/out/report.pdf", error_message=None))
+    assert choose_recording(done).result is None
+
+
+def test_run_passes_choices_through_and_records_the_result(monkeypatch):
+    captured = {}
 
     def fake_analyze_and_report(input_path, out_dir):
-        captured_args["input_path"] = input_path
-        captured_args["out_dir"] = out_dir
-        return AnalysisResult(success=True, report_path="/tmp/out/report.pdf", error_message=None)
+        captured.update(input_path=input_path, out_dir=out_dir)
+        return AnalysisResult(success=True, report_path="/out/report.pdf", error_message=None)
 
     monkeypatch.setattr(gui_app, "analyze_and_report", fake_analyze_and_report)
-    monkeypatch.setattr(gui_app.messagebox, "showinfo", lambda *a, **kw: events.append(("showinfo", a)))
-    monkeypatch.setattr(gui_app.messagebox, "showerror", lambda *a, **kw: events.append(("showerror", a)))
-    monkeypatch.setattr(gui_app, "_open_in_default_app", lambda path: events.append(("open", path)))
-
-    gui_app._on_pick_file()
-
-    # Format normalization belongs to the shared ingest dispatcher, so the GUI
-    # passes through both WFDB headers and DR200 channel files unchanged.
-    assert captured_args == {"input_path": "/recordings/119.hea", "out_dir": "/tmp/out"}
-    assert events == [
-        ("showinfo", ("Done", "Report written to /tmp/out/report.pdf")),
-        ("open", "/tmp/out/report.pdf"),
-    ]
+    state = run(AppState(recording_path="/r/119.hea", out_dir="/out"))
+    assert captured == {"input_path": "/r/119.hea", "out_dir": "/out"}
+    assert state.result.report_path == "/out/report.pdf"
+    assert state.running is False
 
 
-def test_on_pick_file_failure_shows_error_and_does_not_open(monkeypatch):
-    events = []
-
-    monkeypatch.setattr(gui_app.filedialog, "askopenfilename", lambda **kw: "/recordings/bad.hea")
-    monkeypatch.setattr(gui_app.filedialog, "askdirectory", lambda **kw: "/tmp/out")
-    monkeypatch.setattr(
-        gui_app,
-        "analyze_and_report",
-        lambda *a, **kw: AnalysisResult(success=False, report_path=None, error_message="boom"),
-    )
-    monkeypatch.setattr(gui_app.messagebox, "showinfo", lambda *a, **kw: events.append(("showinfo", a)))
-    monkeypatch.setattr(gui_app.messagebox, "showerror", lambda *a, **kw: events.append(("showerror", a)))
-    monkeypatch.setattr(gui_app, "_open_in_default_app", lambda *a, **kw: events.append(("open", a)))
-
-    gui_app._on_pick_file()
-
-    # On failure, only the error dialog fires - no report is opened.
-    assert events == [("showerror", ("Analysis failed", "boom"))]
+def test_run_without_both_choices_is_a_no_op(monkeypatch):
+    monkeypatch.setattr(gui_app, "analyze_and_report", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("must not run")))
+    before = AppState(recording_path="/r/119.hea")
+    assert run(before) == before
