@@ -110,3 +110,17 @@ def test_short_wall_clock_recording_keeps_axis_to_its_own_span(monkeypatch):
     _render(beats, _summary(), datetime(2010, 7, 8, 11, 12, 50))
     assert captured["xlim_days"] < 1.0 / 24  # well under an hour
     assert captured["n_ticks"] < 20
+
+
+def test_draw_timeline_draws_into_given_figure_region():
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+    from canine_holter.report.timeline import draw_timeline
+
+    fig = plt.figure(figsize=(8.5, 11))
+    gs = GridSpec(2, 1, figure=fig)
+    beats = [_beat(i * 0.8, 0.8 if i else None, "N") for i in range(300)]
+    ax_hr, ax_ev = draw_timeline(fig, gs[1], beats, _summary(), None)
+    assert ax_hr.figure is fig and ax_ev.figure is fig
+    assert len(fig.axes) == 2
+    plt.close(fig)

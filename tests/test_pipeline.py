@@ -29,8 +29,9 @@ def test_run_analysis_produces_report_from_fixture():
     input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
         report_path = run_analysis(input_path, out_dir)
-        assert os.path.exists(report_path)
+        assert report_path == os.path.join(out_dir, "report.pdf")
         assert os.path.getsize(report_path) > 0
+        assert os.path.exists(os.path.join(out_dir, "report.md"))
 
 
 def test_run_analysis_report_contains_plausible_stats_for_known_fixture():
@@ -40,8 +41,8 @@ def test_run_analysis_report_contains_plausible_stats_for_known_fixture():
     summarize/write_report)."""
     input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
-        report_path = run_analysis(input_path, out_dir)
-        with open(report_path) as f:
+        run_analysis(input_path, out_dir)
+        with open(os.path.join(out_dir, "report.md")) as f:
             content = f.read()
 
     total_beats_match = re.search(r"Total beats:\s*(\d+)", content)
@@ -94,7 +95,7 @@ def test_run_analysis_end_to_end_on_native_flash(tmp_path):
     report_path = run_analysis(str(flash_path), str(out_dir))
 
     assert os.path.exists(report_path)
-    content = open(report_path).read()
+    content = open(out_dir / "report.md").read()
     total_beats_match = re.search(r"Total beats:\s*(\d+)", content)
     assert total_beats_match, f"report missing 'Total beats' line:\n{content}"
     # A 25 s, 120 bpm spike train should yield roughly 50 beats; assert a
@@ -132,12 +133,14 @@ def test_parse_start_time_rejects_garbage():
 def test_run_analysis_start_time_string_is_parsed_against_header():
     input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
-        report_path = run_analysis(input_path, out_dir, start_time="2026-08-23 15:36")
-        assert "- Recording start: 2026-08-23 15:36:00" in open(report_path).read()
+        run_analysis(input_path, out_dir, start_time="2026-08-23 15:36")
+        content = open(os.path.join(out_dir, "report.md")).read()
+        assert "- Recording start: 2026-08-23 15:36:00" in content
 
 
 def test_run_analysis_start_time_override_appears_in_report():
     input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
-        report_path = run_analysis(input_path, out_dir, start_time=datetime(2026, 8, 23, 15, 36))
-        assert "- Recording start: 2026-08-23 15:36:00" in open(report_path).read()
+        run_analysis(input_path, out_dir, start_time=datetime(2026, 8, 23, 15, 36))
+        content = open(os.path.join(out_dir, "report.md")).read()
+        assert "- Recording start: 2026-08-23 15:36:00" in content

@@ -20,8 +20,9 @@ def test_writes_markdown_report_with_summary_stats():
 
     with tempfile.TemporaryDirectory() as out_dir:
         report_path = write_report(beats, summary, out_dir, samples=None, sample_rate=None)
+        assert report_path == os.path.join(out_dir, "report.pdf")
         assert os.path.exists(report_path)
-        content = open(report_path).read()
+        content = open(os.path.join(out_dir, "report.md")).read()
         assert "PVC" in content
         assert "1" in content  # pvc_count appears somewhere in the stats
 
@@ -50,7 +51,7 @@ def test_report_with_zero_pvc_beats_has_no_flagged_section_and_no_plots():
     with tempfile.TemporaryDirectory() as out_dir:
         report_path = write_report(beats, summary, out_dir, samples=None, sample_rate=None)
         assert os.path.exists(report_path)
-        content = open(report_path).read()
+        content = open(os.path.join(out_dir, "report.md")).read()
         assert "Flagged events" not in content
         strip_files = [f for f in os.listdir(out_dir) if f.startswith("event_")]
         assert strip_files == []
@@ -70,8 +71,8 @@ def test_isolated_single_pvc_is_not_a_flagged_event():
     assert summary.pvc_count == 1
 
     with tempfile.TemporaryDirectory() as out_dir:
-        report_path = write_report(beats, summary, out_dir, samples=None, sample_rate=None)
-        content = open(report_path).read()
+        write_report(beats, summary, out_dir, samples=None, sample_rate=None)
+        content = open(os.path.join(out_dir, "report.md")).read()
         assert "Flagged events" not in content
         assert "Event 1" not in content
 
@@ -86,8 +87,8 @@ def test_no_plots_written_when_samples_missing_even_with_multibeat_run():
     summary = summarize(beats, dog_weight_class="medium")
 
     with tempfile.TemporaryDirectory() as out_dir:
-        report_path = write_report(beats, summary, out_dir, samples=None, sample_rate=None)
-        content = open(report_path).read()
+        write_report(beats, summary, out_dir, samples=None, sample_rate=None)
+        content = open(os.path.join(out_dir, "report.md")).read()
         assert "Flagged events" in content
         assert "Event 1" in content
         strip_files = [f for f in os.listdir(out_dir) if f.startswith("event_")]
@@ -161,8 +162,8 @@ def test_report_summary_includes_start_and_duration():
     summary = summarize(beats)
     start = datetime(2026, 8, 23, 15, 33, 8)
     with tempfile.TemporaryDirectory() as out_dir:
-        path = write_report(beats, summary, out_dir, samples=None, sample_rate=None, start_time=start)
-        content = open(path).read()
+        write_report(beats, summary, out_dir, samples=None, sample_rate=None, start_time=start)
+        content = open(os.path.join(out_dir, "report.md")).read()
         assert "- Recording start: 2026-08-23 15:33:08" in content
         assert "- Duration: 0h 2m" in content
 
@@ -171,8 +172,8 @@ def test_report_summary_without_start_says_unknown():
     beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N")]
     summary = summarize(beats)
     with tempfile.TemporaryDirectory() as out_dir:
-        path = write_report(beats, summary, out_dir, samples=None, sample_rate=None)
-        assert "- Recording start: unknown" in open(path).read()
+        write_report(beats, summary, out_dir, samples=None, sample_rate=None)
+        assert "- Recording start: unknown" in open(os.path.join(out_dir, "report.md")).read()
 
 
 def test_flagged_event_uses_wall_clock_label_when_start_known():
@@ -180,16 +181,33 @@ def test_flagged_event_uses_wall_clock_label_when_start_known():
     summary = summarize(beats)
     start = datetime(2026, 8, 23, 15, 33, 8)
     with tempfile.TemporaryDirectory() as out_dir:
-        path = write_report(beats, summary, out_dir, samples=None, sample_rate=None, start_time=start)
-        assert "Event 1: 2 consecutive PVCs at ~15:33:09 (t=1.2s)" in open(path).read()
+        write_report(beats, summary, out_dir, samples=None, sample_rate=None, start_time=start)
+        assert "Event 1: 2 consecutive PVCs at ~15:33:09 (t=1.2s)" in open(os.path.join(out_dir, "report.md")).read()
 
 
 def test_report_links_timeline_png():
     beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N")]
     summary = summarize(beats)
     with tempfile.TemporaryDirectory() as out_dir:
-        path = write_report(beats, summary, out_dir, samples=None, sample_rate=None)
-        content = open(path).read()
+        write_report(beats, summary, out_dir, samples=None, sample_rate=None)
+        content = open(os.path.join(out_dir, "report.md")).read()
         assert "## Timeline" in content
         assert "![timeline](timeline.png)" in content
         assert os.path.exists(os.path.join(out_dir, "timeline.png"))
+
+
+def test_summary_lines_match_markdown_summary_block():
+    from canine_holter.report.generate import _summary_lines
+
+    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N")]
+    summary = summarize(beats)
+    start = datetime(2026, 8, 23, 15, 33, 8)
+    lines = _summary_lines(summary, start, duration_sec=0.8)
+    assert lines[0] == "- Recording start: 2026-08-23 15:33:08"
+    assert lines[1] == "- Duration: 0h 0m"
+    assert "- Total beats: 2" in lines
+    with tempfile.TemporaryDirectory() as out_dir:
+        write_report(beats, summary, out_dir, samples=None, sample_rate=None, start_time=start)
+        content = open(os.path.join(out_dir, "report.md")).read()
+    for line in lines:
+        assert line in content

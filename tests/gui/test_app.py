@@ -80,7 +80,7 @@ def test_on_pick_file_success_passes_selected_recording_and_shows_info(monkeypat
     def fake_analyze_and_report(input_path, out_dir):
         captured_args["input_path"] = input_path
         captured_args["out_dir"] = out_dir
-        return AnalysisResult(success=True, report_path="/tmp/out/report.md", error_message=None)
+        return AnalysisResult(success=True, report_path="/tmp/out/report.pdf", error_message=None)
 
     monkeypatch.setattr(gui_app, "analyze_and_report", fake_analyze_and_report)
     monkeypatch.setattr(gui_app.messagebox, "showinfo", lambda *a, **kw: events.append(("showinfo", a)))
@@ -93,8 +93,8 @@ def test_on_pick_file_success_passes_selected_recording_and_shows_info(monkeypat
     # passes through both WFDB headers and DR200 channel files unchanged.
     assert captured_args == {"input_path": "/recordings/119.hea", "out_dir": "/tmp/out"}
     assert events == [
-        ("showinfo", ("Done", "Report written to /tmp/out/report.md")),
-        ("open", "/tmp/out/report.md"),
+        ("showinfo", ("Done", "Report written to /tmp/out/report.pdf")),
+        ("open", "/tmp/out/report.pdf"),
     ]
 
 
