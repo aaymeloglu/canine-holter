@@ -49,7 +49,7 @@ def _summary_page(
         fig.text(_LEFT, y, "Flagged events (couplets, triplets, VT runs)", va="top", fontsize=12, fontweight="bold")
         y -= 0.03
         y = _text_block(fig, y, event_lines, fontsize=10)
-    timeline_top = min(0.50, y - 0.03)
+    timeline_top = min(0.58, y - 0.04)
     gs = GridSpec(1, 1, figure=fig, top=timeline_top, bottom=0.06, left=_LEFT, right=0.97)
     draw_timeline(fig, gs[0], beats, summary, start_time)
     return fig
@@ -62,7 +62,8 @@ def _strip_page(
     sample_rate: float,
 ) -> Figure:
     fig = plt.figure(figsize=PAGE_SIZE_IN)
-    gs = GridSpec(STRIPS_PER_PAGE, 1, figure=fig, top=0.94, bottom=0.06, left=_LEFT, right=0.97, hspace=0.7)
+    fig.text(_LEFT, 0.95, "Flagged events (couplets, triplets, VT runs)", va="top", fontsize=12, fontweight="bold")
+    gs = GridSpec(STRIPS_PER_PAGE, 1, figure=fig, top=0.90, bottom=0.06, left=_LEFT, right=0.97, hspace=0.7)
     for row, (run, label) in enumerate(zip(runs, labels)):
         ax = fig.add_subplot(gs[row])
         draw_strip(ax, samples, sample_rate, run_center_time(run))

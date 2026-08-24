@@ -21,7 +21,7 @@ canine-holter /Volumes/DR200/flash.dat --out report/
 
 The input can also be a WFDB record or a vendor-extracted DR200 channel such as `flashc0.dat`.
 
-The report labels events by time of day using the start clock in the recording header, and includes a whole-recording timeline (heart rate plus PVC / pause / brady / tachy lanes). If the recorder's clock was wrong, override it with `--start-time 15:36` (or `HH:MM:SS`, or `"YYYY-MM-DD HH:MM"`); a time-only value keeps the recording's own date.
+The primary output is `report/report.pdf`: summary stats and a whole-recording timeline (heart rate plus PVC / pause / brady / tachy lanes) on the first page, then a rhythm strip for each flagged event. `report.md`, `timeline.png`, and the strip PNGs are written alongside. Events are labelled by time of day using the start clock in the recording header. If the recorder's clock was wrong, override it with `--start-time 15:36` (or `HH:MM:SS`, or `"YYYY-MM-DD HH:MM"`); a time-only value keeps the recording's own date.
 
 Or launch the GUI: `python -m canine_holter.gui.app` (or download the signed `.app` from [Releases](https://github.com/aaymeloglu/canine-holter/releases)).
 

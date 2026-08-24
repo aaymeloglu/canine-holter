@@ -13,3 +13,4 @@ def draw_strip(ax, samples: np.ndarray, sample_rate: float, center_time: float) 
     t = np.arange(len(segment)) / sample_rate
     ax.plot(t, segment, linewidth=0.8)
     ax.set_xlabel("seconds")
+    ax.set_ylabel("mV")
