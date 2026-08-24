@@ -169,3 +169,19 @@ def test_zero_rr_interval_does_not_crash_and_breaks_run():
     ]
     summary = summarize(beats, dog_weight_class="medium")
     assert summary.bradycardia_events == []
+
+
+def test_longest_pause_is_the_longest_rr_interval():
+    beats = [
+        Beat(time=0.0, rr_interval=None, qrs_duration=0.08, label="N"),
+        Beat(time=0.8, rr_interval=0.8, qrs_duration=0.08, label="N"),
+        Beat(time=2.7, rr_interval=1.9, qrs_duration=0.08, label="N"),
+        Beat(time=3.5, rr_interval=0.8, qrs_duration=0.08, label="N"),
+    ]
+    assert summarize(beats).longest_pause_sec == 1.9
+
+
+def test_longest_pause_is_none_when_no_beat_has_an_rr():
+    beats = [Beat(time=0.0, rr_interval=None, qrs_duration=0.08, label="N")]
+    assert summarize(beats).longest_pause_sec is None
+    assert summarize([]).longest_pause_sec is None

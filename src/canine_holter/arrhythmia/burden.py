@@ -20,6 +20,7 @@ class ArrhythmiaSummary:
     bradycardia_events: list[tuple[float, float]]
     tachycardia_events: list[tuple[float, float]]
     pauses: list[float]
+    longest_pause_sec: float | None = None  # longest RR interval in the recording
 
 
 def pvc_runs(beats: list[Beat]) -> list[list[Beat]]:
@@ -107,6 +108,8 @@ def summarize(beats: list[Beat], dog_weight_class: str = "medium") -> Arrhythmia
             vtach_runs += 1
 
     pauses = [b.time for b in beats if b.rr_interval and b.rr_interval >= PAUSE_THRESHOLD_SEC]
+    rr_intervals = [b.rr_interval for b in beats if b.rr_interval]
+    longest_pause_sec = max(rr_intervals) if rr_intervals else None
 
     brady_threshold = BRADYCARDIA_HR_THRESHOLD[dog_weight_class]
     tachy_threshold = TACHYCARDIA_HR_THRESHOLD[dog_weight_class]
@@ -123,4 +126,5 @@ def summarize(beats: list[Beat], dog_weight_class: str = "medium") -> Arrhythmia
         bradycardia_events=bradycardia_events,
         tachycardia_events=tachycardia_events,
         pauses=pauses,
+        longest_pause_sec=longest_pause_sec,
     )

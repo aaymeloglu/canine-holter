@@ -35,6 +35,7 @@ def _write(n_runs, samples=True):
         write_pdf(
             out,
             summary_lines=["- Total beats: 200"],
+            reference_lines=["- under 50 ..."],
             beats=beats,
             summary=summary,
             start_time=datetime(2026, 8, 23, 15, 33, 8),
@@ -58,5 +59,40 @@ def test_four_events_spill_to_a_third_page():
     assert _write(4)[0] == 3
 
 
-def test_no_samples_lists_events_without_strip_pages():
-    assert _write(3, samples=False)[0] == 1
+def test_no_samples_lists_events_on_a_text_page_instead_of_strips():
+    assert _write(3, samples=False)[0] == 2
+
+
+def _beats_with_isolated_pvcs(n):
+    beats = [_beat(i * 0.8, 0.8 if i else None, "N") for i in range(200)]
+    for k in range(n):
+        i = 10 + k * 5
+        beats[i] = _beat(beats[i].time, 0.8, "V")
+    return beats
+
+
+def _write_isolated(n, samples=True):
+    beats = _beats_with_isolated_pvcs(n)
+    summary = summarize(beats)
+    sig = np.sin(np.linspace(0, 2000, 160 * 100)) if samples else None
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "report.pdf")
+        write_pdf(
+            out,
+            summary_lines=["- Total beats: 200"],
+            reference_lines=["- under 50 ..."],
+            beats=beats,
+            summary=summary,
+            start_time=None,
+            samples=sig,
+            sample_rate=100.0 if samples else None,
+        )
+        return _page_count(out)
+
+
+def test_isolated_pvcs_get_their_own_strip_pages():
+    assert _write_isolated(4) == 3  # summary + two strip pages (3 + 1)
+
+
+def test_isolated_pvcs_are_listed_on_a_text_page_without_samples():
+    assert _write_isolated(4, samples=False) == 2
