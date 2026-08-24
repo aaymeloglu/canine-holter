@@ -44,7 +44,7 @@ def run_analysis(
 ) -> str:
     """Run the full ingest -> detect -> classify -> summarize -> report
     pipeline against a supported recording. Returns the path to the written
-    PDF report (report.md and PNGs are written alongside). WFDB records, native DR200 flash.dat recordings, and
+    PDF report, the only file written. WFDB records, native DR200 flash.dat recordings, and
     vendor-extracted DR200 channel files are supported.
 
     start_time overrides the recording's own start clock. A string is parsed

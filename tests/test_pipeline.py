@@ -31,10 +31,10 @@ def test_run_analysis_produces_report_from_fixture():
         report_path = run_analysis(input_path, out_dir)
         assert report_path == os.path.join(out_dir, "report.pdf")
         assert os.path.getsize(report_path) > 0
-        assert os.path.exists(os.path.join(out_dir, "report.md"))
+        assert os.listdir(out_dir) == ["report.pdf"]
 
 
-def test_run_analysis_report_contains_plausible_stats_for_known_fixture():
+def test_run_analysis_report_contains_plausible_stats_for_known_fixture(report_text):
     """Guards against a regression where the pipeline runs end-to-end without
     error but silently produces garbage or empty stats (e.g. an ingest bug
     that yields zero beats, or a wiring bug that passes the wrong beats into
@@ -42,8 +42,7 @@ def test_run_analysis_report_contains_plausible_stats_for_known_fixture():
     input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
         run_analysis(input_path, out_dir)
-        with open(os.path.join(out_dir, "report.md")) as f:
-            content = f.read()
+        content = report_text()
 
     total_beats_match = re.search(r"Total beats:\s*(\d+)", content)
     pvc_count_match = re.search(r"PVC count:\s*(\d+)", content)
@@ -87,7 +86,7 @@ def _write_synthetic_flash(path, block_count: int = 15) -> None:
     path.write_bytes(metadata_block() + b"".join(blocks) + bytes(511))
 
 
-def test_run_analysis_end_to_end_on_native_flash(tmp_path):
+def test_run_analysis_end_to_end_on_native_flash(tmp_path, report_text):
     flash_path = tmp_path / "flash.dat"
     _write_synthetic_flash(flash_path)
     out_dir = tmp_path / "out"
@@ -95,7 +94,7 @@ def test_run_analysis_end_to_end_on_native_flash(tmp_path):
     report_path = run_analysis(str(flash_path), str(out_dir))
 
     assert os.path.exists(report_path)
-    content = open(out_dir / "report.md").read()
+    content = report_text()
     total_beats_match = re.search(r"Total beats:\s*(\d+)", content)
     assert total_beats_match, f"report missing 'Total beats' line:\n{content}"
     # A 25 s, 120 bpm spike train should yield roughly 50 beats; assert a
@@ -130,17 +129,15 @@ def test_parse_start_time_rejects_garbage():
         parse_start_time("half past three", HEADER)
 
 
-def test_run_analysis_start_time_string_is_parsed_against_header():
+def test_run_analysis_start_time_string_is_parsed_against_header(report_text):
     input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
         run_analysis(input_path, out_dir, start_time="2026-08-23 15:36")
-        content = open(os.path.join(out_dir, "report.md")).read()
-        assert "- Recording start: 2026-08-23 15:36:00" in content
+        assert "- Recording start: 2026-08-23 15:36:00" in report_text()
 
 
-def test_run_analysis_start_time_override_appears_in_report():
+def test_run_analysis_start_time_override_appears_in_report(report_text):
     input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
         run_analysis(input_path, out_dir, start_time=datetime(2026, 8, 23, 15, 36))
-        content = open(os.path.join(out_dir, "report.md")).read()
-        assert "- Recording start: 2026-08-23 15:36:00" in content
+        assert "- Recording start: 2026-08-23 15:36:00" in report_text()
