@@ -2,9 +2,11 @@
 import os
 import re
 import tempfile
+from datetime import date, datetime
 
 import numpy as np
-from canine_holter.pipeline import run_analysis
+import pytest
+from canine_holter.pipeline import parse_start_time, run_analysis
 from tests.native_flash_factory import data_block, metadata_block
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -98,3 +100,44 @@ def test_run_analysis_end_to_end_on_native_flash(tmp_path):
     # A 25 s, 120 bpm spike train should yield roughly 50 beats; assert a
     # non-trivial count so a wiring bug that silently drops the signal fails.
     assert int(total_beats_match.group(1)) >= 20
+
+
+# --- start-time override -----------------------------------------------------
+HEADER = datetime(2026, 8, 23, 15, 33, 8)
+
+
+def test_parse_start_time_hh_mm_borrows_header_date():
+    assert parse_start_time("15:36", HEADER) == datetime(2026, 8, 23, 15, 36)
+
+
+def test_parse_start_time_hh_mm_ss():
+    assert parse_start_time("15:36:10", HEADER) == datetime(2026, 8, 23, 15, 36, 10)
+
+
+def test_parse_start_time_full_datetime_ignores_header():
+    assert parse_start_time("2026-08-22 09:00", HEADER) == datetime(2026, 8, 22, 9, 0)
+
+
+def test_parse_start_time_time_only_without_header_uses_today():
+    result = parse_start_time("15:36", None)
+    assert result.date() == date.today()
+    assert (result.hour, result.minute) == (15, 36)
+
+
+def test_parse_start_time_rejects_garbage():
+    with pytest.raises(ValueError):
+        parse_start_time("half past three", HEADER)
+
+
+def test_run_analysis_start_time_string_is_parsed_against_header():
+    input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
+    with tempfile.TemporaryDirectory() as out_dir:
+        report_path = run_analysis(input_path, out_dir, start_time="2026-08-23 15:36")
+        assert "- Recording start: 2026-08-23 15:36:00" in open(report_path).read()
+
+
+def test_run_analysis_start_time_override_appears_in_report():
+    input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
+    with tempfile.TemporaryDirectory() as out_dir:
+        report_path = run_analysis(input_path, out_dir, start_time=datetime(2026, 8, 23, 15, 36))
+        assert "- Recording start: 2026-08-23 15:36:00" in open(report_path).read()

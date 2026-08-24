@@ -59,3 +59,28 @@ def test_main_requires_out_argument(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "--out" in captured.err
     assert "required" in captured.err
+
+
+def test_main_start_time_override_reaches_report(monkeypatch):
+    with tempfile.TemporaryDirectory() as out_dir:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["canine-holter", INPUT_PATH, "--out", out_dir, "--start-time", "2026-08-23 15:36"],
+        )
+        main()
+        content = open(os.path.join(out_dir, "report.md")).read()
+        assert "- Recording start: 2026-08-23 15:36:00" in content
+
+
+def test_main_rejects_unparseable_start_time(monkeypatch, capsys):
+    with tempfile.TemporaryDirectory() as out_dir:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["canine-holter", INPUT_PATH, "--out", out_dir, "--start-time", "teatime"],
+        )
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 2
+        assert "start-time" in capsys.readouterr().err
