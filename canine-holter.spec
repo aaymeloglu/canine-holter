@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+from importlib.metadata import version as _pkg_version
 
 
 a = Analysis(
@@ -45,6 +46,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='canine-holter.app',
-    icon=None,
+    icon='assets/icon.icns',
     bundle_identifier='com.aymeloglu.canine-holter',
+    version=_pkg_version('canine-holter'),  # from pyproject via pip install -e .
 )
