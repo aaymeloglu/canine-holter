@@ -9,3 +9,4 @@ data/raw/
 build/
 dist/
 .pytest_cache/
+.coverage

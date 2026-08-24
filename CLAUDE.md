@@ -21,7 +21,7 @@ ingest → detection → classify → arrhythmia → report
 - `detection/detect.py` - `detect_beats()`: R-peak detection (NeuroKit2) + QRS width via a custom energy-envelope method, returns a list of unlabeled `Beat`s.
 - `classify/rules.py` - `classify_beats()`: rules-based PVC labeling. A beat is "V" only if BOTH premature (short RR vs. a causal rolling baseline) AND wide (long QRS vs. baseline). This module is deliberately isolated behind `Beat in, labeled Beat out` so a learned model could replace it later without touching anything else.
 - `arrhythmia/burden.py` - `summarize()`: aggregates labeled beats into an `ArrhythmiaSummary` (PVC burden %, couplet/triplet/VT-run counts, sustained brady/tachy events, pauses).
-- `report/generate.py` - `write_report()`: writes `report.pdf` (the primary artifact, returned to callers), `report.md`, `timeline.png`, and a strip PNG per flagged multi-beat run; event times are wall-clock labels when `Recording.start_time` is known. `report/pdf.py` assembles the PDF pages with matplotlib `PdfPages` (no extra dependency). `report/timeline.py` - `draw_timeline()`: heart-rate trend over PVC/pause/brady/tachy event lanes, drawn from beats + summary only. `report/common.py` and `report/strip.py` hold the text/event helpers and strip drawing shared by the markdown and PDF paths.
+- `report/` - `generate.write_report()` writes `report.pdf` (the primary artifact; its path is what `run_analysis` returns), plus `report.md`, `timeline.png`, and a strip PNG per flagged multi-beat run. `pdf.py` assembles the PDF with matplotlib `PdfPages` (no extra dependency); `timeline.py` draws the heart-rate trend over PVC/pause/brady/tachy event lanes from beats + summary only; `common.py` and `strip.py` hold the text/event helpers and strip drawing shared by the markdown and PDF paths. Event times are wall-clock labels when `Recording.start_time` is known.
 - `pipeline.py` / `cli.py` / `gui/app.py` - `run_analysis()` wires the stages; the CLI and the Tkinter GUI both call it. The GUI is the artifact non-technical users run (see Packaging).
 
 **The boundary contract is the most important design property here.** The classifier is swappable and `ingest` grows new formats precisely because modules only exchange `Recording`/`Beat`/`ArrhythmiaSummary`. Keep it that way: no module should import another's private helpers, and `detect`/`classify`/etc. must stay format-agnostic (they only ever see samples + a sample rate, then time + RR + QRS).
@@ -53,9 +53,13 @@ The DR200 writes NorthEast Monitoring's proprietary `flash.dat` to the SD card. 
 - **TDD.** Write the failing test, watch it fail, implement, watch it pass. Commit in small steps.
 - **Fail closed.** Parsers (especially `dr200.py`) must reject malformed/unsupported input with a clear error rather than silently producing a wrong signal. This is a medical-adjacent tool; a wrong number is worse than a loud failure. Every guard should have a test proving it fires.
 - **Tests must not be circular.** For codec/table logic, don't encode-with-table-T then decode-with-table-T and call it verified - a wrong T passes. Assert against literal expected values derived from an independent source (e.g. the `unpackdc` cross-check, or hand-computed physical values).
-- **Mutation-check new tests.** After adding a test meant to guard specific behavior, break the code it guards in a scratch copy and confirm the test actually fails, then restore. A test that passes against broken code guards nothing.
 - **Run the suite:** `pytest`. CI (`.github/workflows/ci.yml`) runs it on every push to `main` and every PR, headless under `xvfb` (the GUI module imports tkinter). Keep CI green.
-- **Coverage** is high (~91%) and broad, not decoder-only. Genuinely hard-to-test surfaces (real Tk window construction in `gui/app.py::main`) are left uncovered deliberately - the testable core of the GUI (`analyze_and_report`, the file-picker logic) is monkeypatched instead. Don't chase 100% by testing Tk event loops.
+- **Coverage** is broad, not decoder-only. Genuinely hard-to-test surfaces (real Tk window construction in `gui/app.py::main`) are left uncovered deliberately - the testable core of the GUI (`analyze_and_report`, the file-picker logic) is monkeypatched instead. Don't chase 100% by testing Tk event loops.
+
+## Workflow
+
+- Work on a branch and open a PR; CI must be green. PRs are **squash-merged** with the PR title and body as the commit message, so write the PR body as the commit message you want in `main`'s history. Merged branches are deleted automatically.
+- Design specs live in `docs/superpowers/specs/` and implementation plans in `docs/superpowers/plans/`, dated `YYYY-MM-DD-<topic>`. Write the spec before a non-trivial feature; it is the record of *why*.
 
 ## Dev commands
 
