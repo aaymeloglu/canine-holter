@@ -77,3 +77,36 @@ def test_single_bin_recording_draws_a_visible_point(monkeypatch):
     beats = [_beat(i * 0.8, 0.8 if i else None, "N") for i in range(50)]
     _render(beats, _summary(), None)
     assert captured["marker"] not in (None, "None", "")
+
+
+def test_tick_interval_scales_with_recording_span():
+    from canine_holter.report.timeline import _tick_interval_minutes
+
+    assert _tick_interval_minutes(25) == 1
+    assert _tick_interval_minutes(8 * 60) == 1
+    assert _tick_interval_minutes(45 * 60) == 5
+    assert _tick_interval_minutes(2.5 * 3600) == 15
+    assert _tick_interval_minutes(8 * 3600) == 60
+    assert _tick_interval_minutes(24 * 3600) == 240
+
+
+def test_short_wall_clock_recording_keeps_axis_to_its_own_span(monkeypatch):
+    """Regression: a 25 s recording with a date axis used to autoscale to
+    +/- 5% of the *date number* (years), and the minute locator then tried
+    to lay out tens of thousands of ticks - minutes of CPU per report."""
+    import matplotlib.pyplot as plt
+
+    captured = {}
+    orig_close = plt.close
+
+    def capture_then_close(fig):
+        ax = fig.axes[1]
+        captured["xlim_days"] = ax.get_xlim()[1] - ax.get_xlim()[0]
+        captured["n_ticks"] = len(ax.get_xticks())
+        orig_close(fig)
+
+    monkeypatch.setattr(plt, "close", capture_then_close)
+    beats = [_beat(i * 0.5, 0.5 if i else None, "N") for i in range(50)]  # 25 s
+    _render(beats, _summary(), datetime(2010, 7, 8, 11, 12, 50))
+    assert captured["xlim_days"] < 1.0 / 24  # well under an hour
+    assert captured["n_ticks"] < 20

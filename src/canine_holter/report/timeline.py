@@ -24,6 +24,27 @@ LANES = [  # (label, color)
 ]
 HR_COLOR = "#52514e"
 GRID_COLOR = "#e5e4e0"
+_TICK_TARGET = 6  # aim for roughly this many x-axis labels
+_TICK_CHOICES_MIN = (1, 5, 10, 15, 30, 60, 120, 240)
+
+
+def _tick_interval_minutes(span_sec: float) -> int:
+    """Pick the coarsest of the standard minute intervals that still yields
+    at least _TICK_TARGET labels, so a 25 s clip and a 24 h recording both
+    get a handful of readable :00/:30-aligned ticks."""
+    for minutes in reversed(_TICK_CHOICES_MIN):
+        if span_sec / (minutes * 60) >= _TICK_TARGET:
+            return minutes
+    return _TICK_CHOICES_MIN[0]
+
+
+def _recording_span_sec(beats: list[Beat], summary: ArrhythmiaSummary) -> float:
+    """End of the recording as far as the timeline can know it: the last
+    beat or event. Floored at one HR bin so an empty recording still has a
+    non-degenerate axis."""
+    ends = [b.time for b in beats] + list(summary.pauses)
+    ends += [end for _, end in summary.bradycardia_events + summary.tachycardia_events]
+    return max([HR_BIN_SEC] + ends)
 
 
 def _heart_rate_trend(beats: list[Beat]) -> tuple[np.ndarray, np.ndarray]:
@@ -97,10 +118,21 @@ def plot_timeline(
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
 
+    # Pin the axis to the recording. Left to autoscale, a near-degenerate
+    # span in date units expands to +/-5% of the *date number* - years - and
+    # the minute locator then tries to place tens of thousands of ticks.
+    span = _recording_span_sec(beats, summary)
+    pad = 0.01 * span
+    ax_ev.set_xlim(to_x(-pad), to_x(span + pad))
     if start_time is None:
         ax_ev.set_xlabel("minutes from start")
     else:
-        ax_ev.xaxis.set_major_locator(mdates.MinuteLocator(byminute=(0, 30)))
+        interval = _tick_interval_minutes(span)
+        if interval >= 60:
+            locator = mdates.HourLocator(interval=interval // 60)
+        else:
+            locator = mdates.MinuteLocator(byminute=range(0, 60, interval))
+        ax_ev.xaxis.set_major_locator(locator)
         ax_ev.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax_ev.set_xlabel("time of day")
 
