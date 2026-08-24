@@ -52,8 +52,8 @@ def test_report_with_zero_pvc_beats_has_no_flagged_section_and_no_plots():
         assert os.path.exists(report_path)
         content = open(report_path).read()
         assert "Flagged events" not in content
-        plot_files = [f for f in os.listdir(out_dir) if f.endswith(".png")]
-        assert plot_files == []
+        strip_files = [f for f in os.listdir(out_dir) if f.startswith("event_")]
+        assert strip_files == []
 
 
 def test_isolated_single_pvc_is_not_a_flagged_event():
@@ -90,8 +90,8 @@ def test_no_plots_written_when_samples_missing_even_with_multibeat_run():
         content = open(report_path).read()
         assert "Flagged events" in content
         assert "Event 1" in content
-        plot_files = [f for f in os.listdir(out_dir) if f.endswith(".png")]
-        assert plot_files == []
+        strip_files = [f for f in os.listdir(out_dir) if f.startswith("event_")]
+        assert strip_files == []
 
 
 def test_plot_strip_clamps_near_start_without_wraparound(monkeypatch):
@@ -182,3 +182,14 @@ def test_flagged_event_uses_wall_clock_label_when_start_known():
     with tempfile.TemporaryDirectory() as out_dir:
         path = write_report(beats, summary, out_dir, samples=None, sample_rate=None, start_time=start)
         assert "Event 1: 2 consecutive PVCs at ~15:33:09 (t=1.2s)" in open(path).read()
+
+
+def test_report_links_timeline_png():
+    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N")]
+    summary = summarize(beats)
+    with tempfile.TemporaryDirectory() as out_dir:
+        path = write_report(beats, summary, out_dir, samples=None, sample_rate=None)
+        content = open(path).read()
+        assert "## Timeline" in content
+        assert "![timeline](timeline.png)" in content
+        assert os.path.exists(os.path.join(out_dir, "timeline.png"))

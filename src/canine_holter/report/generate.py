@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import ArrhythmiaSummary, pvc_runs
+from canine_holter.report.timeline import plot_timeline
 
 STRIP_WINDOW_SEC = 6.0  # seconds of context shown around each flagged run
 
@@ -54,8 +55,9 @@ def write_report(
     sample_rate: float | None,
     start_time: datetime | None = None,
 ) -> str:
-    """Write a markdown summary report plus (if waveform data is provided)
-    rhythm-strip PNGs for each flagged multi-beat PVC run. Event times are
+    """Write a markdown summary report, a whole-recording timeline PNG, and
+    (if waveform data is provided) rhythm-strip PNGs for each flagged
+    multi-beat PVC run. Event times are
     given as wall-clock labels when start_time is known. Returns the path
     to the markdown report."""
     os.makedirs(out_dir, exist_ok=True)
@@ -86,6 +88,9 @@ def write_report(
         f"- Sustained tachycardia events: {len(summary.tachycardia_events)}",
         "",
     ]
+
+    plot_timeline(beats, summary, start_time, os.path.join(out_dir, "timeline.png"))
+    lines += ["## Timeline", "![timeline](timeline.png)", ""]
 
     flagged = _flagged_runs(beats)
     if flagged:
