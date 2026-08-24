@@ -84,3 +84,19 @@ def test_main_rejects_unparseable_start_time(monkeypatch, capsys):
             main()
         assert exc.value.code == 2
         assert "start-time" in capsys.readouterr().err
+
+
+def test_main_unsupported_input_error_is_not_blamed_on_start_time(monkeypatch, capsys):
+    """Only a start-time parse failure may be reported as a --start-time
+    problem; an unrelated load error must surface as itself."""
+    with tempfile.TemporaryDirectory() as out_dir:
+        bogus = os.path.join(out_dir, "notes.txt")
+        open(bogus, "w").write("not a recording")
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["canine-holter", bogus, "--out", out_dir, "--start-time", "15:36"],
+        )
+        with pytest.raises(ValueError, match="Unsupported recording input"):
+            main()
+        assert "start-time" not in capsys.readouterr().err
