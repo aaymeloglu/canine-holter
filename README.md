@@ -23,7 +23,7 @@ The input can also be a WFDB record or a vendor-extracted DR200 channel such as 
 
 The primary output is `report/report.pdf`: summary stats and a whole-recording timeline (heart rate plus PVC / pause / brady / tachy lanes) on the first page, then a rhythm strip for each flagged event (couplets, triplets, VT runs) and for each isolated PVC, with the flagged beats marked. Each strip section is capped at 24 strips spread evenly through the recording, and the heading says when the cap applied. Page 1 also prints the ESVC Doberman screening reference ranges (PVCs per 24 h, complex ectopy, pauses) next to the numbers, so a reader can see how the counts compare - it never calls a recording normal or abnormal. The PDF is the only file written. Events are labelled by time of day using the start clock in the recording header. If the recorder's clock was wrong, override it with `--start-time 15:36` (or `HH:MM:SS`, or `"YYYY-MM-DD HH:MM"`); a time-only value keeps the recording's own date.
 
-Or launch the GUI: `python -m canine_holter.gui.app` (or download the signed `.app` from [Releases](https://github.com/aaymeloglu/canine-holter/releases)).
+Or launch the GUI: `python -m canine_holter.gui.app` (or download the signed `.app` from [Releases](https://github.com/aaymeloglu/canine-holter/releases)). It is three steps: choose the recording, choose the folder to write `report.pdf` into, then Run; the status line shows progress and the result, and the report opens when it is done.
 
 ## Development
 
