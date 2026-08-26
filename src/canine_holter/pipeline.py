@@ -6,6 +6,7 @@ from canine_holter.ingest.loader import load_recording
 from canine_holter.detection.detect import detect_beats
 from canine_holter.classify.rules import classify_beats
 from canine_holter.arrhythmia.burden import summarize
+from canine_holter.quality.gate import assess_quality, exclude_beats
 from canine_holter.report.generate import write_report
 
 _START_TIME_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%H:%M:%S", "%H:%M")
@@ -50,15 +51,20 @@ def run_analysis(
     start_time overrides the recording's own start clock. A string is parsed
     with parse_start_time against the header (so a bare HH:MM keeps the
     recorder's date); a datetime is used as-is.
+
+    Signal that fails quality gating (artifact, off-body, the first and
+    last minute) is excluded before the detector's beats are used, and the
+    report states how much time was analyzed.
     """
     rec = load_recording(input_path)
     if isinstance(start_time, str):
         start_time = parse_start_time(start_time, rec.start_time)
     if start_time is not None:
         rec = replace(rec, start_time=start_time)
-    beats = detect_beats(rec.samples, rec.sample_rate)
+    quality = assess_quality(rec.samples, rec.sample_rate)
+    beats = exclude_beats(detect_beats(rec.samples, rec.sample_rate), quality)
     labeled = classify_beats(beats)
-    summary = summarize(labeled, dog_weight_class=dog_weight_class)
+    summary = summarize(labeled, dog_weight_class=dog_weight_class, quality=quality)
     return write_report(
         labeled,
         summary,

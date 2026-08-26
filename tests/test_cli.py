@@ -70,7 +70,7 @@ def test_main_start_time_override_reaches_report(monkeypatch, report_text):
             ["canine-holter", INPUT_PATH, "--out", out_dir, "--start-time", "2026-08-23 15:36"],
         )
         main()
-        assert "- Recording start: 2026-08-23 15:36:00" in report_text()
+        assert "Start: 2026-08-23 15:36:00" in report_text()
 
 
 def test_main_rejects_unparseable_start_time(monkeypatch, capsys):

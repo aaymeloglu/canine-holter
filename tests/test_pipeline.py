@@ -6,7 +6,12 @@ from datetime import date, datetime
 
 import numpy as np
 import pytest
+from canine_holter.arrhythmia.burden import summarize
+from canine_holter.classify.rules import classify_beats
+from canine_holter.detection.detect import detect_beats
+from canine_holter.ingest.loader import load_recording
 from canine_holter.pipeline import parse_start_time, run_analysis
+from canine_holter.report.generate import build_content
 from tests.native_flash_factory import data_block, metadata_block
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -34,23 +39,19 @@ def test_run_analysis_produces_report_from_fixture():
         assert os.listdir(out_dir) == ["report.pdf"]
 
 
-def test_run_analysis_report_contains_plausible_stats_for_known_fixture(report_text):
-    """Guards against a regression where the pipeline runs end-to-end without
-    error but silently produces garbage or empty stats (e.g. an ingest bug
+def test_report_contains_plausible_stats_for_known_fixture():
+    """Guards against a regression where the stages run end-to-end without
+    error but silently produce garbage or empty stats (e.g. an ingest bug
     that yields zero beats, or a wiring bug that passes the wrong beats into
-    summarize/write_report)."""
-    input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
-    with tempfile.TemporaryDirectory() as out_dir:
-        run_analysis(input_path, out_dir)
-        content = report_text()
-
-    total_beats_match = re.search(r"Total beats:\s*(\d+)", content)
-    pvc_count_match = re.search(r"PVC count:\s*(\d+)", content)
-    assert total_beats_match, f"report missing 'Total beats' line:\n{content}"
-    assert pvc_count_match, f"report missing 'PVC count' line:\n{content}"
-
-    total_beats = int(total_beats_match.group(1))
-    pvc_count = int(pvc_count_match.group(1))
+    summarize/build_content). run_analysis excludes the first and last
+    minute of every recording and this fixture is 60 s, so the check runs
+    one stage below it, on the same detect -> classify -> summarize path."""
+    rec = load_recording(os.path.join(FIXTURES_DIR, "mitdb_119", "119"))
+    labeled = classify_beats(detect_beats(rec.samples, rec.sample_rate))
+    content = build_content(labeled, summarize(labeled), rec.start_time)
+    rows = {r.label: r.value for g in content.summary_groups for r in g.rows}
+    total_beats = int(rows["Total beats"])
+    pvc_count = int(rows["PVCs"].split()[0])
 
     assert MIN_EXPECTED_TOTAL_BEATS <= total_beats <= MAX_EXPECTED_TOTAL_BEATS, (
         f"total beats {total_beats} outside plausible range for this fixture"
@@ -69,6 +70,10 @@ def _spike_train_block_encoding():
     # channel 0: +70,+70 up then -70,-70 back to baseline each period; a sharp,
     # detectable QRS-like spike. Codes 7=+70, 9=-70 in the DR200 delta table.
     encoded = np.zeros((304, 3), dtype=np.uint8)
+    # +1/-1 count jitter between spikes: a real baseline is never exactly
+    # flat, and a flat one is what quality gating excludes.
+    encoded[0::2, 0] = 1
+    encoded[1::2, 0] = 15
     phase = np.arange(304) % _FLASH_SPIKE_PERIOD
     encoded[phase == 0, 0] = 7
     encoded[phase == 1, 0] = 7
@@ -88,7 +93,7 @@ def _write_synthetic_flash(path, block_count: int = 15) -> None:
 
 def test_run_analysis_end_to_end_on_native_flash(tmp_path, report_text):
     flash_path = tmp_path / "flash.dat"
-    _write_synthetic_flash(flash_path)
+    _write_synthetic_flash(flash_path, block_count=110)  # ~186 s: a minute survives the edge rule
     out_dir = tmp_path / "out"
 
     report_path = run_analysis(str(flash_path), str(out_dir))
@@ -97,9 +102,21 @@ def test_run_analysis_end_to_end_on_native_flash(tmp_path, report_text):
     content = report_text()
     total_beats_match = re.search(r"Total beats:\s*(\d+)", content)
     assert total_beats_match, f"report missing 'Total beats' line:\n{content}"
-    # A 25 s, 120 bpm spike train should yield roughly 50 beats; assert a
+    # ~66 s analyzed of a 120 bpm spike train is ~130 beats; assert a
     # non-trivial count so a wiring bug that silently drops the signal fails.
-    assert int(total_beats_match.group(1)) >= 20
+    assert int(total_beats_match.group(1)) >= 60
+    assert re.search(r"Analyzed:\s*0h 1m \(3[0-9]%\)", content), content
+
+
+def test_run_analysis_excludes_a_recording_shorter_than_the_edge_minutes(tmp_path, report_text):
+    """The default 25 s synthetic recording lies inside the first minute, so
+    it is excluded whole: the report says so instead of counting beats."""
+    flash_path = tmp_path / "flash.dat"
+    _write_synthetic_flash(flash_path)
+    run_analysis(str(flash_path), str(tmp_path / "out"))
+    content = report_text()
+    assert re.search(r"Analyzed:\s*0h 0m \(0%\)", content), content
+    assert re.search(r"Total beats:\s*0\b", content), content
 
 
 # --- start-time override -----------------------------------------------------
@@ -133,11 +150,11 @@ def test_run_analysis_start_time_string_is_parsed_against_header(report_text):
     input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
         run_analysis(input_path, out_dir, start_time="2026-08-23 15:36")
-        assert "- Recording start: 2026-08-23 15:36:00" in report_text()
+        assert "Start: 2026-08-23 15:36:00" in report_text()
 
 
 def test_run_analysis_start_time_override_appears_in_report(report_text):
     input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
     with tempfile.TemporaryDirectory() as out_dir:
         run_analysis(input_path, out_dir, start_time=datetime(2026, 8, 23, 15, 36))
-        assert "- Recording start: 2026-08-23 15:36:00" in report_text()
+        assert "Start: 2026-08-23 15:36:00" in report_text()

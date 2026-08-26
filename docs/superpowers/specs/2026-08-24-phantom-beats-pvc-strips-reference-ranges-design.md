@@ -31,8 +31,10 @@ Three changes, in the order they matter:
 - Signal-quality / off-body gating and "analyzable duration" (separate
   work; the artifact tail still produces junk).
 - Recalibrating the brady/tachy thresholds or the sustained-event window.
-- Any wording that implies a diagnosis. Reference ranges are printed for
-  comparison; the report never says "normal" or "abnormal" about the dog.
+- ~~Any wording that implies a diagnosis. Reference ranges are printed for
+  comparison; the report never says "normal" or "abnormal" about the dog.~~
+  Superseded 2026-08-26: values are color-coded against the published
+  bands; see `2026-08-26-signal-quality-and-summary-page-design.md`.
 - Adding amplitude to the `Beat` contract. Rejection happens entirely
   inside detection, which is the only stage that sees samples.
 

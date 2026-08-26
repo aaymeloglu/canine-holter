@@ -26,3 +26,11 @@ def test_pvc_line_labels_an_isolated_pvc():
     from datetime import datetime
     start = datetime(2026, 8, 23, 15, 33, 8)
     assert pvc_line(2, [_beat(8232.8, "V")], start) == "PVC 3: isolated PVC at ~17:50:20 (t=8232.8s)"
+
+
+def test_short_time_is_clock_with_start_and_elapsed_without():
+    from datetime import datetime
+    from canine_holter.report.common import short_time
+
+    assert short_time(8183.2, datetime(2026, 8, 23, 15, 33, 8)) == "17:49:31"
+    assert short_time(8183.2, None) == "t=8183s"

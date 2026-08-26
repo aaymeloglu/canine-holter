@@ -313,3 +313,45 @@ def test_hourly_row_heart_rate_is_none_when_the_hour_has_too_few_beats():
 
 def test_hourly_rows_empty_for_no_beats():
     assert summarize([]).hourly == []
+
+
+# --- duration, analyzed time, excluded spans -------------------------------
+from canine_holter.quality.gate import SignalQuality  # noqa: E402
+
+
+def test_summary_without_quality_uses_the_last_beat_as_duration_and_excludes_nothing():
+    s = summarize(_hours_of_beats(2.5, 0.5))
+    assert (s.duration_sec, s.analyzed_sec, s.excluded) == (9000.0, 9000.0, ())
+
+
+def test_summary_with_quality_carries_duration_analyzed_and_excluded():
+    q = SignalQuality(10000.0, ((0.0, 60.0), (9500.0, 10000.0)))
+    s = summarize(_hours_of_beats(2.5, 0.5), quality=q)
+    assert (s.duration_sec, s.analyzed_sec, s.excluded) == (10000.0, 9440.0, q.excluded)
+
+
+def test_hourly_rows_run_to_the_recording_end_not_the_last_beat():
+    q = SignalQuality(10000.0, ((9000.0, 10000.0),))
+    rows = summarize(_hours_of_beats(2.5, 0.5), quality=q).hourly  # beats end at 9000
+    assert [(r.start_sec, r.end_sec) for r in rows] == [(0.0, 3600.0), (3600.0, 7200.0), (7200.0, 10000.0)]
+    assert [r.analyzed_sec for r in rows] == [3600.0, 3600.0, 1800.0]
+
+
+def test_hourly_rows_analyzed_equals_the_hour_without_quality():
+    rows = summarize(_hours_of_beats(2.5, 0.5)).hourly
+    assert [r.analyzed_sec for r in rows] == [3600.0, 3600.0, 1800.0]
+
+
+def test_hourly_rows_keep_a_beat_exactly_on_the_last_boundary():
+    """Duration on the hour with a beat right at it: the beat's hour is listed."""
+    beats = _hours_of_beats(2.0, 0.5)  # last beat at 7200.0
+    rows = summarize(beats, quality=SignalQuality(7200.0, ())).hourly
+    assert [(r.start_sec, r.end_sec, r.beats) for r in rows] == [
+        (0.0, 3600.0, 7200), (3600.0, 7200.0, 7200), (7200.0, 7200.0, 1)
+    ]
+
+
+def test_summary_empty_beats_with_quality_still_reports_duration():
+    s = summarize([], quality=SignalQuality(120.0, ((0.0, 120.0),)))
+    assert (s.duration_sec, s.analyzed_sec, s.total_beats) == (120.0, 0.0, 0)
+    assert [(r.start_sec, r.end_sec, r.beats, r.analyzed_sec) for r in s.hourly] == [(0.0, 120.0, 0, 0.0)]

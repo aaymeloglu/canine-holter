@@ -12,9 +12,14 @@ def report_text(monkeypatch):
     real = generate.write_pdf
 
     def spy(out_path, *, content, **kw):
+        lines = []
+        for group in content.summary_groups:
+            lines.append(group.title)
+            for row in group.rows:
+                lines.append(f"{row.label}: {row.value}" + (f" ({row.reference})" if row.reference else ""))
         captured["text"] = "\n".join(
-            content.summary_lines
-            + content.reference_lines
+            lines
+            + content.footer_lines
             + [line for s in content.sections for line in [s.heading, *s.labels]]
             + [" | ".join(row) for row in [content.hourly_header, *content.hourly_rows]]
         )
