@@ -1,6 +1,6 @@
-"""Renders ReportContent as the PDF: summary, reference ranges, and
-timeline on page 1, then rhythm strips per section on the pages after (or,
-with no waveform, one text page per section)."""
+"""Renders ReportContent as the PDF: summary and reference ranges on page
+1, the timeline on page 2, then rhythm strips per section on the pages after
+(or, with no waveform, one text page per section)."""
 from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -34,13 +34,7 @@ def _text_block(fig: Figure, y: float, lines: list[str], **kw) -> float:
     return y
 
 
-def _summary_page(
-    summary_lines: list[str],
-    reference_lines: list[str],
-    beats: list[Beat],
-    summary: ArrhythmiaSummary,
-    start_time: datetime | None,
-) -> Figure:
+def _summary_page(summary_lines: list[str], reference_lines: list[str]) -> Figure:
     fig = plt.figure(figsize=PAGE_SIZE_IN)
     y = 0.95
     fig.text(_LEFT, y, REPORT_TITLE, va="top", fontsize=16, fontweight="bold")
@@ -53,8 +47,14 @@ def _summary_page(
     y -= 0.01
     fig.text(_LEFT, y, "Reference ranges", va="top", fontsize=12, fontweight="bold")
     y -= 0.03
-    y = _text_block(fig, y, [line.lstrip("- ") for line in reference_lines], fontsize=9)
-    gs = GridSpec(1, 1, figure=fig, top=y - 0.04, bottom=0.06, left=_LEFT, right=0.97)
+    _text_block(fig, y, [line.lstrip("- ") for line in reference_lines], fontsize=9)
+    return fig
+
+
+def _timeline_page(beats: list[Beat], summary: ArrhythmiaSummary, start_time: datetime | None) -> Figure:
+    fig = plt.figure(figsize=PAGE_SIZE_IN)
+    fig.text(_LEFT, 0.95, "Heart-rate timeline and events", va="top", fontsize=12, fontweight="bold")
+    gs = GridSpec(1, 1, figure=fig, top=0.90, bottom=0.55, left=_LEFT, right=0.97)
     draw_timeline(fig, gs[0], beats, summary, start_time)
     return fig
 
@@ -111,8 +111,11 @@ def write_pdf(
     """Write the multi-page PDF report. With no waveform samples each
     section's events are listed as text on a page of their own."""
     with PdfPages(out_path) as pdf:
-        fig = _summary_page(content.summary_lines, content.reference_lines, beats, summary, start_time)
-        pdf.savefig(fig)
-        plt.close(fig)
+        for fig in (
+            _summary_page(content.summary_lines, content.reference_lines),
+            _timeline_page(beats, summary, start_time),
+        ):
+            pdf.savefig(fig)
+            plt.close(fig)
         for section in content.sections:
             _write_section(pdf, section, samples, sample_rate)

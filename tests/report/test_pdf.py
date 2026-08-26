@@ -46,22 +46,27 @@ def _write(n_runs, samples=True):
         return _page_count(out), os.path.getsize(out)
 
 
-def test_no_flagged_events_is_one_page():
+# Every report has a summary page, a timeline page, and an extremes strip
+# page (fastest/slowest heart rate); event sections add pages after those.
+_BASE_PAGES = 3
+
+
+def test_no_flagged_events_is_summary_timeline_and_extremes():
     pages, size = _write(0)
-    assert pages == 1
+    assert pages == _BASE_PAGES
     assert size > 1000
 
 
 def test_three_events_fit_on_one_strip_page():
-    assert _write(3)[0] == 2
+    assert _write(3)[0] == _BASE_PAGES + 1
 
 
-def test_four_events_spill_to_a_third_page():
-    assert _write(4)[0] == 3
+def test_four_events_spill_to_a_second_strip_page():
+    assert _write(4)[0] == _BASE_PAGES + 2
 
 
 def test_no_samples_lists_events_on_a_text_page_instead_of_strips():
-    assert _write(3, samples=False)[0] == 2
+    assert _write(3, samples=False)[0] == _BASE_PAGES + 1
 
 
 def _beats_with_isolated_pvcs(n):
@@ -91,8 +96,8 @@ def _write_isolated(n, samples=True):
 
 
 def test_isolated_pvcs_get_their_own_strip_pages():
-    assert _write_isolated(4) == 3  # summary + two strip pages (3 + 1)
+    assert _write_isolated(4) == _BASE_PAGES + 2  # two strip pages (3 + 1)
 
 
 def test_isolated_pvcs_are_listed_on_a_text_page_without_samples():
-    assert _write_isolated(4, samples=False) == 2
+    assert _write_isolated(4, samples=False) == _BASE_PAGES + 1
