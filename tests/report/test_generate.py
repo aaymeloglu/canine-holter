@@ -5,7 +5,8 @@ import numpy as np
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import summarize
 from canine_holter.report.common import EVENTS_TITLE, EXTREMES_TITLE, ISOLATED_TITLE
-from canine_holter.report.generate import _summary_lines, build_content, write_report
+from canine_holter.quality.gate import SignalQuality
+from canine_holter.report.generate import SummaryRow, build_content, write_report
 
 
 def _beat(time, rr, label, qrs=0.08):
@@ -39,13 +40,6 @@ def test_write_report_without_samples_still_writes_only_the_pdf():
     with tempfile.TemporaryDirectory() as out_dir:
         write_report(beats, summarize(beats), out_dir, samples=None, sample_rate=None)
         assert os.listdir(out_dir) == ["report.pdf"]
-
-
-def test_content_summary_has_the_stats():
-    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(1.6, 0.8, "V"), _beat(2.4, 0.8, "N")]
-    content = build_content(beats, summarize(beats), None)
-    assert "- Total beats: 4" in content.summary_lines
-    assert "- PVC count: 1" in content.summary_lines
 
 
 def test_isolated_single_pvc_goes_in_its_own_section_not_flagged_events():
@@ -88,36 +82,6 @@ def test_flagged_event_uses_wall_clock_label_when_start_known():
     assert content.sections[0].labels == ["Event 1: 2 consecutive PVCs at ~15:33:09 (t=1.2s)"]
 
 
-def test_content_summary_includes_start_and_duration():
-    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(150.0, 0.8, "N")]
-    content = build_content(beats, summarize(beats), datetime(2026, 8, 23, 15, 33, 8))
-    assert "- Recording start: 2026-08-23 15:33:08" in content.summary_lines
-    assert "- Duration: 0h 2m" in content.summary_lines
-
-
-def test_content_summary_without_start_says_unknown():
-    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N")]
-    assert "- Recording start: unknown" in build_content(beats, summarize(beats), None).summary_lines
-
-
-def test_summary_has_longest_pause_and_24h_line_and_reference_lines():
-    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(3.77, 2.97, "N")]
-    content = build_content(beats, summarize(beats), None)
-    assert "- Longest pause: 2.97 s" in content.summary_lines
-    assert "- PVCs per 24 h: not computed (recording is 0h 0m; needs >= 20 h)" in content.summary_lines
-    assert any("under 50" in line for line in content.reference_lines)
-
-
-def test_content_summary_lines_come_from_the_shared_helper():
-    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N")]
-    summary = summarize(beats)
-    start = datetime(2026, 8, 23, 15, 33, 8)
-    lines = _summary_lines(summary, start, duration_sec=0.8)
-    assert lines[0] == "- Recording start: 2026-08-23 15:33:08"
-    assert lines[1] == "- Duration: 0h 0m"
-    assert build_content(beats, summary, start).summary_lines == lines
-
-
 def _steady(n, rr):
     return [_beat(i * rr, rr if i else None, "N") for i in range(n)]
 
@@ -128,40 +92,6 @@ def _with_run(beats, start_index, n, rr):
     for k in range(n):
         out[start_index + k] = _beat(t + k * rr, beats[start_index].rr_interval if k == 0 else rr, "V", qrs=0.12)
     return out
-
-
-def test_summary_has_heart_rate_lines_with_times():
-    beats = _steady(10, 0.5)  # 120 bpm
-    start = datetime(2026, 8, 23, 15, 33, 8)
-    lines = build_content(beats, summarize(beats), start).summary_lines
-    assert "- Mean heart rate: 120 bpm" in lines
-    assert any(l.startswith("- Slowest heart rate (5-beat median): 120 bpm at 15:33:") for l in lines)
-    assert any(l.startswith("- Fastest heart rate (5-beat median): 120 bpm at 15:33:") for l in lines)
-
-
-def test_summary_heart_rate_lines_say_when_not_computed():
-    beats = _steady(3, 0.5)
-    lines = build_content(beats, summarize(beats), None).summary_lines
-    assert "- Heart rate: not computed (fewer than 5 beats with an RR interval)" in lines
-
-
-def test_summary_has_longest_and_fastest_run_lines():
-    beats = _with_run(_with_run(_steady(100, 0.5), 10, 5, 0.3), 50, 3, 0.25)
-    lines = build_content(beats, summarize(beats), None).summary_lines
-    assert "- Longest run: 5 PVCs at 200 bpm, starting t=5.0s" in lines
-    assert "- Fastest run: 3 PVCs at 240 bpm, starting t=25.0s" in lines
-
-
-def test_summary_run_lines_say_none():
-    beats = _steady(10, 0.5)
-    lines = build_content(beats, summarize(beats), None).summary_lines
-    assert "- Longest run: none (no runs of 3+ PVCs)" in lines
-    assert "- Fastest run: none (no runs of 3+ PVCs)" in lines
-
-
-def test_reference_lines_distinguish_vt_from_slower_runs():
-    lines = build_content(_steady(10, 0.5), summarize(_steady(10, 0.5)), None).reference_lines
-    assert any("idioventricular" in l for l in lines)
 
 
 def test_extremes_section_comes_first_with_max_min_pause_and_fastest_run():
@@ -178,7 +108,7 @@ def test_extremes_section_comes_first_with_max_min_pause_and_fastest_run():
         "Fastest heart rate", "Slowest heart rate", "Longest pause", "Fastest run"
     ]
     assert section.labels[2] == "Longest pause: 3.00 s, ending at t=33.0s"
-    assert section.labels[3] == "Fastest run: 4 PVCs at 240 bpm, starting t=10.0s"
+    assert section.labels[3] == "Fastest run: 4 beats, 240 bpm, t=10s"
     # The pause strip marks both beats bracketing the gap; the run strip marks every PVC.
     assert [b.time for b in section.runs[2]] == [30.0, 33.0]
     assert [b.time for b in section.runs[3]] == [10.0, 10.25, 10.5, 10.75]
@@ -196,7 +126,9 @@ def test_no_extremes_section_when_heart_rate_not_computed():
     assert build_content(beats, summarize(beats), None).sections == []
 
 
-HOURLY_HEADER = ["Hour", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets", "Runs (3+)", "Pauses"]
+HOURLY_HEADER = [
+    "Hour", "Analyzed (min)", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets", "Runs (3+)", "Pauses",
+]
 
 
 def test_hourly_table_rows_with_wall_clock_labels():
@@ -204,8 +136,8 @@ def test_hourly_table_rows_with_wall_clock_labels():
     start = datetime(2026, 8, 23, 15, 33, 8)
     content = build_content(beats, summarize(beats), start)
     assert content.hourly_header == HOURLY_HEADER
-    assert content.hourly_rows[0] == ["15:33-16:33", "7200", "120", "120", "120", "3", "0", "1", "0"]
-    assert content.hourly_rows[1][:2] == ["16:33-17:03", "3601"]
+    assert content.hourly_rows[0] == ["15:33-16:33", "60.0", "7200", "120", "120", "120", "3", "0", "1", "0"]
+    assert content.hourly_rows[1][:3] == ["16:33-17:03", "30.0", "3601"]
 
 
 def test_hourly_table_uses_elapsed_labels_without_a_start_time():
@@ -217,10 +149,99 @@ def test_hourly_table_uses_elapsed_labels_without_a_start_time():
 def test_hourly_table_blanks_rates_for_an_hour_with_too_few_beats():
     beats = _steady(7200, 0.5) + [_beat(3700.0, 100.5, "N")]
     rows = build_content(beats, summarize(beats), None).hourly_rows
-    assert rows[1] == ["1:00-1:01", "1", "-", "-", "-", "0", "0", "0", "1"]
+    assert rows[1] == ["1:00-1:01", "1.7", "1", "-", "-", "-", "0", "0", "0", "1"]
 
 
 def test_hourly_table_empty_for_no_beats():
     content = build_content([], summarize([]), None)
     assert content.hourly_header == HOURLY_HEADER
     assert content.hourly_rows == []
+
+
+# --- summary panels -----------------------------------------------------------
+def _rows(content, title):
+    group = next(g for g in content.summary_groups if g.title == title)
+    return {r.label: r for r in group.rows}
+
+
+def test_content_has_four_summary_groups_in_order_and_a_footer():
+    beats = _couplet_and_single()
+    content = build_content(beats, summarize(beats), None)
+    assert [g.title for g in content.summary_groups] == ["Recording", "Heart rate", "Ventricular ectopy", "Pauses"]
+    assert any("not a diagnosis" in line for line in content.footer_lines)
+
+
+def test_recording_group_reports_duration_analyzed_and_excluded():
+    beats = _couplet_and_single()
+    q = SignalQuality(7200.0, ((0.0, 60.0), (7140.0, 7200.0)))
+    rows = _rows(build_content(beats, summarize(beats, quality=q), datetime(2026, 8, 23, 15, 33, 8)), "Recording")
+    assert rows["Start"].value == "2026-08-23 15:33:08"
+    assert rows["Duration"].value == "2h 0m"
+    assert rows["Analyzed"] == SummaryRow("Analyzed", "1h 58m (98%)", ">= 20 h", "caution")
+    assert rows["Excluded"] == SummaryRow("Excluded", "0h 2m", "artifact / off-body")
+    assert rows["Total beats"].value == "7"
+
+
+def test_recording_group_without_start_says_unknown():
+    beats = _couplet_and_single()
+    assert _rows(build_content(beats, summarize(beats), None), "Recording")["Start"].value == "unknown"
+
+
+def test_ectopy_group_values_references_and_statuses():
+    beats = _couplet_and_single()
+    rows = _rows(build_content(beats, summarize(beats), None), "Ventricular ectopy")
+    assert rows["PVCs"] == SummaryRow("PVCs", "3 (42.86%)")
+    assert rows["PVCs per 24 h"] == SummaryRow("PVCs per 24 h", "n/a", "needs >= 20 h analyzed")
+    assert rows["Couplets"] == SummaryRow("Couplets", "1", "0", "alert")
+    assert rows["Triplets"] == SummaryRow("Triplets", "0", "0", "ok")
+    assert rows["VT runs (4+)"] == SummaryRow("VT runs (4+)", "0", "0", "ok")
+    assert rows["Longest run"] == SummaryRow("Longest run", "none")
+    assert rows["Fastest run"] == SummaryRow("Fastest run", "none", "<180 bpm", "ok")
+
+
+def test_ectopy_group_scales_pvcs_by_analyzed_time_and_colours_the_band():
+    beats = _steady(24 * 3600 * 2, 0.5)  # 24 h at 120 bpm
+    beats = [_beat(b.time, b.rr_interval, "V" if i % 100 == 0 else "N") for i, b in enumerate(beats)]
+    q = SignalQuality(24 * 3600.0, ((0.0, 4 * 3600.0),))  # 20 h analyzed
+    rows = _rows(build_content(beats, summarize(beats, quality=q), None), "Ventricular ectopy")
+    assert rows["PVCs per 24 h"].reference == "<50 | 50-300 | >300"
+    assert rows["PVCs per 24 h"].value == "2074 (scaled from 20h 0m analyzed)"
+    assert rows["PVCs per 24 h"].status == "alert"
+
+
+def test_run_rows_show_beats_rate_and_time():
+    beats = _with_run(_with_run(_steady(100, 0.5), 10, 5, 0.3), 50, 3, 0.25)
+    rows = _rows(build_content(beats, summarize(beats), datetime(2026, 8, 23, 15, 33, 8)), "Ventricular ectopy")
+    assert rows["Longest run"] == SummaryRow("Longest run", "5 beats, 200 bpm, 15:33:13")
+    assert rows["Fastest run"] == SummaryRow("Fastest run", "3 beats, 240 bpm, 15:33:33", "<180 bpm", "alert")
+
+
+def test_heart_rate_group_has_mean_and_timed_extremes():
+    beats = _steady(10, 0.5)  # 120 bpm
+    rows = _rows(build_content(beats, summarize(beats), datetime(2026, 8, 23, 15, 33, 8)), "Heart rate")
+    assert rows["Mean"] == SummaryRow("Mean", "120 bpm")
+    assert rows["Slowest"].value.startswith("120 bpm at 15:33:") and rows["Slowest"].reference == "5-beat median"
+    assert rows["Fastest"].value.startswith("120 bpm at 15:33:")
+    assert rows["Brady events"] == SummaryRow("Brady events", "0")
+    assert rows["Tachy events"] == SummaryRow("Tachy events", "0")
+
+
+def test_heart_rate_group_says_when_not_computed():
+    beats = _steady(3, 0.5)
+    rows = _rows(build_content(beats, summarize(beats), None), "Heart rate")
+    assert rows["Heart rate"].value == "not computed (fewer than 5 beats with an RR)"
+
+
+def test_pause_group_counts_and_colours_the_longest():
+    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(3.77, 2.97, "N")]
+    rows = _rows(build_content(beats, summarize(beats), None), "Pauses")
+    assert rows["Pauses >= 2.5 s"] == SummaryRow("Pauses >= 2.5 s", "1")
+    assert rows["Longest"] == SummaryRow("Longest", "2.97 s", "<2.5 | 2.5-5 | >5 s", "caution")
+
+
+def test_hourly_header_and_rows_carry_analyzed_minutes():
+    beats = _couplet_and_single()
+    q = SignalQuality(4000.0, ((0.0, 60.0), (3940.0, 4000.0)))
+    content = build_content(beats, summarize(beats, quality=q), None)
+    assert content.hourly_header[:2] == ["Hour", "Analyzed (min)"]
+    assert [row[1] for row in content.hourly_rows] == ["59.0", "5.7"]

@@ -131,3 +131,14 @@ def test_draw_timeline_draws_into_given_figure_region():
     assert ax_hr.figure is fig and ax_ev.figure is fig
     assert len(fig.axes) == 2
     plt.close(fig)
+
+
+def test_excluded_spans_are_drawn_as_bands_on_both_panels_and_the_axis_reaches_the_end():
+    beats = [_beat(i * 0.8, 0.8 if i else None, "N") for i in range(300)]
+    summary = _summary(duration_sec=400.0, excluded=((0.0, 60.0), (340.0, 400.0)))
+    fig = plt.figure(figsize=(12, 5))
+    ax_hr, ax_ev = draw_timeline(fig, GridSpec(1, 1, figure=fig)[0], beats, summary, None)
+    assert len(ax_hr.patches) == 2
+    assert len(ax_ev.patches) == 2
+    assert ax_ev.get_xlim()[1] >= 400.0 / 60  # the recording end, not the last beat
+    plt.close(fig)

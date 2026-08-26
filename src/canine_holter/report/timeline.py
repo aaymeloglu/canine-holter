@@ -26,6 +26,7 @@ LANES = [  # (label, color)
 ]
 HR_COLOR = "#52514e"
 GRID_COLOR = "#e5e4e0"
+EXCLUDED_COLOR = "#9e9d99"
 _TICK_TARGET = 6  # aim for roughly this many x-axis labels
 _TICK_CHOICES_MIN = (1, 5, 10, 15, 30, 60, 120, 240)
 
@@ -41,10 +42,10 @@ def _tick_interval_minutes(span_sec: float) -> int:
 
 
 def _recording_span_sec(beats: list[Beat], summary: ArrhythmiaSummary) -> float:
-    """End of the recording as far as the timeline can know it: the last
-    beat or event. Floored at one HR bin so an empty recording still has a
+    """End of the recording: its duration when known, else the last beat or
+    event. Floored at one HR bin so an empty recording still has a
     non-degenerate axis."""
-    ends = [b.time for b in beats] + list(summary.pauses)
+    ends = [summary.duration_sec] + [b.time for b in beats] + list(summary.pauses)
     ends += [end for _, end in summary.bradycardia_events + summary.tachycardia_events]
     return max([HR_BIN_SEC] + ends)
 
@@ -90,6 +91,12 @@ def draw_timeline(
     ax_hr = fig.add_subplot(inner[0])
     ax_ev = fig.add_subplot(inner[1], sharex=ax_hr)
     ax_hr.tick_params(labelbottom=False)
+    for start, end in summary.excluded:
+        for ax in (ax_hr, ax_ev):
+            ax.axvspan(
+                to_x(start), to_x(end), facecolor=EXCLUDED_COLOR, edgecolor=EXCLUDED_COLOR,
+                alpha=0.25, hatch="///", linewidth=0,
+            )
 
     centers, bpm = _heart_rate_trend(beats)
     # A line through a single point draws nothing; give short recordings a dot.

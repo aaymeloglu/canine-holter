@@ -128,3 +128,17 @@ def test_hourly_table_shares_the_timeline_page_for_a_day_long_recording():
 
 def test_hourly_table_spills_to_its_own_page_past_the_first_page_rows():
     assert _write_hours(26.5) == _BASE_PAGES + 1  # 27 rows: 26 under the timeline, 1 on a new page
+
+
+def test_summary_page_renders_groups_with_status_colours_and_footer():
+    import matplotlib.pyplot as plt
+    from canine_holter.report.pdf import STATUS_COLORS, _summary_page
+
+    beats = _beats_with_couplets(1)
+    content = build_content(beats, summarize(beats), None)
+    fig = _summary_page(content.summary_groups, content.footer_lines)
+    texts = {t.get_text(): t for t in fig.texts}
+    assert "RECORDING" in texts and "VENTRICULAR ECTOPY" in texts and "Couplets" in texts
+    assert texts["1"].get_color() == STATUS_COLORS["alert"]  # the couplet count
+    assert any("not a diagnosis" in t for t in texts)
+    plt.close(fig)

@@ -1,46 +1,70 @@
-"""Reference ranges printed beside the report numbers. The bands come from
-the ESVC Doberman DCM screening guidelines (Wess et al. 2017); the tests
-pin the literal values so a wording edit cannot silently move a band."""
-from canine_holter.report.reference import pvc_per_24h, reference_lines, pvc_per_24h_line
+"""Reference bands and the status each value gets. The bands come from the
+ESVC Doberman DCM screening guidelines (Wess et al. 2017); the tests pin
+the literal boundaries so a wording edit cannot silently move a band."""
+from canine_holter.report.reference import (
+    FOOTER_LINES,
+    PAUSE_BAND,
+    PVC_24H_BAND,
+    RUN_RATE_BAND,
+    analyzed_status,
+    count_status,
+    pause_status,
+    pvc_24h_status,
+    pvc_per_24h,
+    run_rate_status,
+)
 
 H = 3600.0
 
 
-def test_pvc_per_24h_not_computed_under_20_hours():
+def test_pvc_per_24h_not_computed_under_20_analyzed_hours():
     assert pvc_per_24h(65, 2.5 * H) is None
     assert pvc_per_24h(65, 19.9 * H) is None
 
 
-def test_pvc_per_24h_equals_count_for_a_24_hour_recording():
+def test_pvc_per_24h_equals_count_for_24_analyzed_hours():
     assert pvc_per_24h(120, 24 * H) == 120
 
 
-def test_pvc_per_24h_scales_a_48_hour_recording_down():
+def test_pvc_per_24h_scales_48_analyzed_hours_down():
     assert pvc_per_24h(120, 48 * H) == 60
 
 
-def test_pvc_per_24h_line_says_not_computed_for_short_recording():
-    assert pvc_per_24h_line(65, 2 * H + 28 * 60) == (
-        "- PVCs per 24 h: not computed (recording is 2h 28m; needs >= 20 h)"
-    )
+def test_pvc_24h_status_bands():
+    assert pvc_24h_status(49) == "ok"
+    assert pvc_24h_status(50) == "caution"
+    assert pvc_24h_status(300) == "caution"
+    assert pvc_24h_status(301) == "alert"
 
 
-def test_pvc_per_24h_line_shows_scaled_count_for_long_recording():
-    assert pvc_per_24h_line(120, 22 * H + 10 * 60) == "- PVCs per 24 h: 130 (scaled from 22h 10m)"
+def test_count_status_is_ok_only_at_zero():
+    assert count_status(0) == "ok"
+    assert count_status(1) == "alert"
 
 
-def test_reference_lines_carry_the_guideline_bands_and_source():
-    text = "\n".join(reference_lines(24 * H))
-    assert "under 50" in text
-    assert "50-300" in text
-    assert "over 300" in text
-    assert "Couplets, triplets, or VT runs" in text
-    assert "2.5 s" in text
+def test_run_rate_status():
+    assert run_rate_status(None) == "ok"
+    assert run_rate_status(179.9) == "caution"
+    assert run_rate_status(180.0) == "alert"
+
+
+def test_pause_status_bands():
+    assert pause_status(None) == "ok"
+    assert pause_status(2.49) == "ok"
+    assert pause_status(2.5) == "caution"
+    assert pause_status(5.0) == "caution"
+    assert pause_status(5.01) == "alert"
+
+
+def test_analyzed_status_needs_20_hours():
+    assert analyzed_status(20 * H) == "ok"
+    assert analyzed_status(19.99 * H) == "caution"
+
+
+def test_band_strings_and_footer_carry_the_guideline_values_and_source():
+    assert PVC_24H_BAND == "<50 | 50-300 | >300"
+    assert PAUSE_BAND == "<2.5 | 2.5-5 | >5 s"
+    assert RUN_RATE_BAND == "<180 bpm"
+    text = "\n".join(FOOTER_LINES)
     assert "Wess" in text and "2017" in text
-
-
-def test_reference_lines_add_short_recording_note_only_under_20_hours():
-    short = "\n".join(reference_lines(2 * H + 28 * 60))
-    long = "\n".join(reference_lines(24 * H))
-    assert "This recording is 2h 28m" in short
-    assert "This recording is" not in long
+    assert "not a diagnosis" in text

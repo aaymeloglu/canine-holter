@@ -8,6 +8,7 @@ from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import (
     HR_EXTREME_WINDOW_BEATS,
     MIN_RUN_BEATS,
+    PAUSE_THRESHOLD_SEC,
     ArrhythmiaSummary,
     HourRow,
     RunStats,
@@ -25,9 +26,41 @@ from canine_holter.report.common import (
     pvc_line,
     section_heading,
     select_evenly,
+    short_time,
 )
 from canine_holter.report.pdf import write_pdf
-from canine_holter.report.reference import format_duration, pvc_per_24h_line, reference_lines
+from canine_holter.report.reference import (
+    ANALYZED_BAND,
+    COUNT_BAND,
+    FOOTER_LINES,
+    MIN_HOURS_FOR_24H_SCALING,
+    PAUSE_BAND,
+    PVC_24H_BAND,
+    RUN_RATE_BAND,
+    analyzed_status,
+    count_status,
+    format_duration,
+    pause_status,
+    pvc_24h_status,
+    pvc_per_24h,
+    run_rate_status,
+)
+
+
+@dataclass(frozen=True)
+class SummaryRow:
+    """One line of a summary panel: the value, the published band it is
+    compared with (short text beside it), and where it falls."""
+    label: str
+    value: str
+    reference: str = ""
+    status: str | None = None  # "ok" | "caution" | "alert" | None (uncoloured)
+
+
+@dataclass(frozen=True)
+class SummaryGroup:
+    title: str
+    rows: list[SummaryRow]
 
 
 @dataclass(frozen=True)
@@ -42,14 +75,17 @@ class StripSection:
 @dataclass(frozen=True)
 class ReportContent:
     """Everything textual in the report, independent of how it is rendered."""
-    summary_lines: list[str]
-    reference_lines: list[str]
+    summary_groups: list[SummaryGroup]
+    footer_lines: list[str]
     sections: list[StripSection]
     hourly_header: list[str]
     hourly_rows: list[list[str]]  # one row of cells per HourRow, in HOURLY_HEADER order
 
 
-HOURLY_HEADER = ["Hour", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets", f"Runs ({MIN_RUN_BEATS}+)", "Pauses"]
+HOURLY_HEADER = [
+    "Hour", "Analyzed (min)", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets",
+    f"Runs ({MIN_RUN_BEATS}+)", "Pauses",
+]
 
 
 def _hour_label(row: HourRow, start_time: datetime | None) -> str:
@@ -67,6 +103,7 @@ def _hourly_rows(summary: ArrhythmiaSummary, start_time: datetime | None) -> lis
     return [
         [
             _hour_label(row, start_time),
+            f"{row.analyzed_sec / 60:.1f}",
             str(row.beats),
             bpm(row.min_bpm),
             bpm(row.mean_bpm),
@@ -80,51 +117,84 @@ def _hourly_rows(summary: ArrhythmiaSummary, start_time: datetime | None) -> lis
     ]
 
 
-def _heart_rate_lines(summary: ArrhythmiaSummary, start_time: datetime | None) -> list[str]:
+def _recording_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> SummaryGroup:
+    duration, analyzed = summary.duration_sec, summary.analyzed_sec
+    pct = 100.0 * analyzed / duration if duration else 0.0
+    return SummaryGroup("Recording", [
+        SummaryRow("Start", start_time.strftime("%Y-%m-%d %H:%M:%S") if start_time else "unknown"),
+        SummaryRow("Duration", format_duration(duration)),
+        SummaryRow("Analyzed", f"{format_duration(analyzed)} ({pct:.0f}%)", ANALYZED_BAND, analyzed_status(analyzed)),
+        SummaryRow("Excluded", format_duration(duration - analyzed), "artifact / off-body"),
+        SummaryRow("Total beats", str(summary.total_beats)),
+    ])
+
+
+def _heart_rate_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> SummaryGroup:
     hr = summary.heart_rate
+    window = f"{HR_EXTREME_WINDOW_BEATS}-beat median"
     if hr is None:
-        return [f"- Heart rate: not computed (fewer than {HR_EXTREME_WINDOW_BEATS} beats with an RR interval)"]
-    window = f"({HR_EXTREME_WINDOW_BEATS}-beat median)"
-    return [
-        f"- Mean heart rate: {hr.mean_bpm:.0f} bpm",
-        f"- Slowest heart rate {window}: {hr.min_bpm:.0f} bpm at {format_time(hr.min_time, start_time)}",
-        f"- Fastest heart rate {window}: {hr.max_bpm:.0f} bpm at {format_time(hr.max_time, start_time)}",
-    ]
+        rate_rows = [
+            SummaryRow("Heart rate", f"not computed (fewer than {HR_EXTREME_WINDOW_BEATS} beats with an RR)")
+        ]
+    else:
+        rate_rows = [
+            SummaryRow("Mean", f"{hr.mean_bpm:.0f} bpm"),
+            SummaryRow("Slowest", f"{hr.min_bpm:.0f} bpm at {short_time(hr.min_time, start_time)}", window),
+            SummaryRow("Fastest", f"{hr.max_bpm:.0f} bpm at {short_time(hr.max_time, start_time)}", window),
+        ]
+    return SummaryGroup("Heart rate", rate_rows + [
+        SummaryRow("Brady events", str(len(summary.bradycardia_events))),
+        SummaryRow("Tachy events", str(len(summary.tachycardia_events))),
+    ])
 
 
 def _run_text(run: RunStats, start_time: datetime | None) -> str:
-    return f"{run.beats} PVCs at {run.bpm:.0f} bpm, starting {format_time(run.start_time, start_time)}"
+    return f"{run.beats} beats, {run.bpm:.0f} bpm, {short_time(run.start_time, start_time)}"
 
 
-def _run_line(name: str, run: RunStats | None, start_time: datetime | None) -> str:
-    if run is None:
-        return f"- {name}: none (no runs of {MIN_RUN_BEATS}+ PVCs)"
-    return f"- {name}: {_run_text(run, start_time)}"
+def _pvc_24h_row(summary: ArrhythmiaSummary) -> SummaryRow:
+    scaled = pvc_per_24h(summary.pvc_count, summary.analyzed_sec)
+    if scaled is None:
+        return SummaryRow("PVCs per 24 h", "n/a", f"needs >= {MIN_HOURS_FOR_24H_SCALING} h analyzed")
+    value = f"{round(scaled)} (scaled from {format_duration(summary.analyzed_sec)} analyzed)"
+    return SummaryRow("PVCs per 24 h", value, PVC_24H_BAND, pvc_24h_status(scaled))
 
 
-def _summary_lines(summary: ArrhythmiaSummary, start_time: datetime | None, duration_sec: float) -> list[str]:
-    """The Summary bullet lines."""
-    start_text = start_time.strftime("%Y-%m-%d %H:%M:%S") if start_time else "unknown"
-    longest = (
-        f"{summary.longest_pause_sec:.2f} s" if summary.longest_pause_sec is not None else "n/a"
-    )
+def _ectopy_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> SummaryGroup:
+    longest, fastest = summary.longest_run, summary.fastest_run
+    return SummaryGroup("Ventricular ectopy", [
+        SummaryRow("PVCs", f"{summary.pvc_count} ({summary.pvc_burden_pct:.2f}%)"),
+        _pvc_24h_row(summary),
+        SummaryRow("Couplets", str(summary.couplets), COUNT_BAND, count_status(summary.couplets)),
+        SummaryRow("Triplets", str(summary.triplets), COUNT_BAND, count_status(summary.triplets)),
+        SummaryRow("VT runs (4+)", str(summary.vtach_runs), COUNT_BAND, count_status(summary.vtach_runs)),
+        SummaryRow("Longest run", _run_text(longest, start_time) if longest else "none"),
+        SummaryRow(
+            "Fastest run",
+            _run_text(fastest, start_time) if fastest else "none",
+            RUN_RATE_BAND,
+            run_rate_status(fastest.bpm if fastest else None),
+        ),
+    ])
+
+
+def _pause_group(summary: ArrhythmiaSummary) -> SummaryGroup:
+    longest = summary.longest_pause_sec
+    return SummaryGroup("Pauses", [
+        SummaryRow(f"Pauses >= {PAUSE_THRESHOLD_SEC:g} s", str(len(summary.pauses))),
+        SummaryRow(
+            "Longest", f"{longest:.2f} s" if longest is not None else "n/a", PAUSE_BAND, pause_status(longest)
+        ),
+    ])
+
+
+def summary_groups(summary: ArrhythmiaSummary, start_time: datetime | None) -> list[SummaryGroup]:
+    """The four summary panels, in reading order."""
     return [
-        f"- Recording start: {start_text}",
-        f"- Duration: {format_duration(duration_sec)}",
-        f"- Total beats: {summary.total_beats}",
-        *_heart_rate_lines(summary, start_time),
-        f"- PVC count: {summary.pvc_count}",
-        f"- PVC burden: {summary.pvc_burden_pct:.2f}%",
-        pvc_per_24h_line(summary.pvc_count, duration_sec),
-        f"- Couplets: {summary.couplets}",
-        f"- Triplets: {summary.triplets}",
-        f"- VT runs (4+ consecutive PVCs): {summary.vtach_runs}",
-        _run_line("Longest run", summary.longest_run, start_time),
-        _run_line("Fastest run", summary.fastest_run, start_time),
-        f"- Pauses (>= threshold): {len(summary.pauses)}",
-        f"- Longest pause: {longest}",
-        f"- Sustained bradycardia events: {len(summary.bradycardia_events)}",
-        f"- Sustained tachycardia events: {len(summary.tachycardia_events)}",
+        _recording_group(summary, start_time),
+        _heart_rate_group(summary, start_time),
+        _ectopy_group(summary, start_time),
+        _pause_group(summary),
     ]
 
 
@@ -176,23 +246,19 @@ def _extremes_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time:
 
 
 def build_content(beats: list[Beat], summary: ArrhythmiaSummary, start_time: datetime | None) -> ReportContent:
-    """Assemble the report text: summary, reference ranges, and the strip
-    sections (heart-rate extremes, then flagged multi-beat runs, then
-    isolated PVCs), the latter two capped at MAX_STRIPS_PER_SECTION with the
-    cap stated in the heading. Event times are wall-clock labels when
-    start_time is known."""
-    # The last beat is the only end-of-recording marker available on every
-    # path (no samples on the report-only path); it is within seconds of the
-    # true end.
-    duration_sec = beats[-1].time if beats else 0.0
+    """Assemble the report content: summary panels, the strip sections
+    (heart-rate extremes, then flagged multi-beat runs, then isolated PVCs;
+    the latter two capped at MAX_STRIPS_PER_SECTION with the cap stated in
+    the heading), and the hourly table. Event times are wall-clock labels
+    when start_time is known."""
     sections = [
         _extremes_section(beats, summary, start_time),
         _section(EVENTS_TITLE, flagged_runs(beats), event_line, start_time),
         _section(ISOLATED_TITLE, isolated_pvcs(beats), pvc_line, start_time),
     ]
     return ReportContent(
-        summary_lines=_summary_lines(summary, start_time, duration_sec),
-        reference_lines=reference_lines(duration_sec),
+        summary_groups=summary_groups(summary, start_time),
+        footer_lines=list(FOOTER_LINES),
         sections=[s for s in sections if s is not None],
         hourly_header=HOURLY_HEADER,
         hourly_rows=_hourly_rows(summary, start_time),

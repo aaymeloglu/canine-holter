@@ -66,3 +66,11 @@ def event_line(index: int, run: list[Beat], start_time: datetime | None) -> str:
 def pvc_line(index: int, run: list[Beat], start_time: datetime | None) -> str:
     """'PVC N: isolated PVC at ~<time>' - one line per plotted single PVC."""
     return f"PVC {index + 1}: isolated PVC at ~{format_time(run_center_time(run), start_time)}"
+
+
+def short_time(elapsed_sec: float, start_time: datetime | None) -> str:
+    """Clock time when the recording start is known, else elapsed seconds.
+    For summary cells, where format_time's combined form is too wide."""
+    if start_time is None:
+        return f"t={elapsed_sec:.0f}s"
+    return (start_time + timedelta(seconds=elapsed_sec)).strftime("%H:%M:%S")
