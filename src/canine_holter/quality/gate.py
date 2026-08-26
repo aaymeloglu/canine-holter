@@ -17,7 +17,7 @@ from canine_holter.types import Beat
 WINDOW_SEC = 5.0
 MAX_AMPLITUDE_RATIO = 4.0  # window peak-to-peak over this multiple of the median: off-body swings, saturation, gross motion
 MIN_AMPLITUDE_RATIO = 0.1  # under this multiple: lead-off, flat line at a rail
-MAX_FLAT_FRACTION = 0.5  # more than this share of zero sample-to-sample steps: flat line
+MAX_FLAT_FRACTION = 0.9  # more than this share of zero sample-to-sample steps: flat line (a quiet DR200 baseline at 12.5 uV/count reaches ~0.5)
 EDGE_SEC = 60.0  # hookup and removal; the HE/LX vendor software calls the first and last minute artifact unconditionally
 BRIDGE_SEC = 30.0  # excluded windows this close are one span: quiet stretches inside an off-body tail are not ECG either
 PAD_SEC = 2.0  # beats right at a span's edge are half-buried in noise

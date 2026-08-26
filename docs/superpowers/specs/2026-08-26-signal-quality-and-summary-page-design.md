@@ -60,7 +60,7 @@ rule fires:
 |---|---|---|---|
 | High amplitude | `MAX_AMPLITUDE_RATIO = 4.0` | window peak-to-peak > 4x the median window peak-to-peak of the recording | off-body swings, saturation, gross motion |
 | Low amplitude | `MIN_AMPLITUDE_RATIO = 0.1` | window peak-to-peak < 0.1x the median | lead-off, flat line at a rail |
-| Flat line | `MAX_FLAT_FRACTION = 0.5` | more than half of the consecutive-sample differences in the window are exactly zero | flat line anywhere (Clifford 2012 flat-line SQI; CinC 2011 rule) |
+| Flat line | `MAX_FLAT_FRACTION = 0.9` | more than 90% of the consecutive-sample differences in the window are exactly zero | flat line anywhere (Clifford 2012 flat-line SQI; CinC 2011 rule). A true flat line is ~100%; a quiet DR200 baseline at 12.5 uV/count reaches ~50% on Teeny's resting stretches, so 0.5 would have excluded real ECG |
 | Recording edges | `EDGE_SEC = 60` | first and last 60 s of the recording | hookup and removal; the HE/LX convention ("none of the signal except the first minute and the last minute is called artifact" even with its artifact detector off) |
 
 Then: bridge gaps of `BRIDGE_SEC = 30` s or less between excluded windows
