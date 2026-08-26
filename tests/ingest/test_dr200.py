@@ -294,3 +294,23 @@ def test_native_flash_rejects_unparseable_start_datetime(tmp_path):
     path.write_bytes(metadata + data_block(encoded) + bytes(511))
     with pytest.raises(NativeDR200FormatError, match="start date/time"):
         load_native_flash(path)
+
+
+def test_native_flash_decodes_all_three_channels(tmp_path):
+    """Channels 1 and 2 are checked against the documented delta table
+    (1 -> +1, 2 -> +3, 3 -> +6, 15 -> -1, 14 -> -3 counts; 12.5 uV/count),
+    independently of channel 0."""
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    encoded[:4, 0] = [7, 7, 9, 9]
+    encoded[:3, 1] = [1, 2, 3]
+    encoded[:2, 2] = [15, 14]
+    path = tmp_path / "flash.dat"
+    write_native_flash(path, encoded)
+    rec = load_native_flash(path)
+    assert rec.channel_names == ("Ch 1", "Ch 2", "Ch 3")
+    assert rec.channels.shape == (3, 304)
+    np.testing.assert_allclose(rec.channels[0][:4], [0.875, 1.75, 0.875, 0.0])
+    np.testing.assert_allclose(rec.channels[1][:3], [0.0125, 0.05, 0.125])
+    np.testing.assert_allclose(rec.channels[2][:2], [-0.0125, -0.05])
+    np.testing.assert_allclose(rec.samples, rec.channels[0])
+    np.testing.assert_allclose(load_native_flash(path, channel=1).samples, rec.channels[1])

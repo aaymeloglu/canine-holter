@@ -18,15 +18,38 @@ class Recording:
     immutable - numpy arrays are mutable in place regardless of Python-level
     frozen semantics, so callers must not mutate .samples after construction.
 
-    samples: the raw ECG signal, in millivolts
+    samples: the analysis lead, in millivolts (1-D)
     sample_rate: samples per second
     start_time: wall-clock time the recording began, if known
     source: identifies where this recording came from (e.g. a fixture name or file path)
+    channels: every recorded lead, shape (n_channels, n_samples), in
+        millivolts and recorder order, for display; None when the input
+        carried a single lead. Only the report reads it - analysis stays on
+        `samples`.
+    channel_names: one name per channels row
     """
     samples: np.ndarray
     sample_rate: float
     start_time: datetime | None
     source: str
+    channels: np.ndarray | None = None
+    channel_names: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Fail closed: a lead set that does not line up with the analysis
+        # lead must not be drawn as if it did.
+        if self.channels is None:
+            return
+        if self.channels.ndim != 2:
+            raise ValueError(f"channels must be 2-D (n_channels, n_samples), got shape {self.channels.shape}")
+        if self.channels.shape[1] != len(self.samples):
+            raise ValueError(
+                f"channels length {self.channels.shape[1]} differs from samples length {len(self.samples)}"
+            )
+        if len(self.channel_names) != self.channels.shape[0]:
+            raise ValueError(
+                f"channel_names has {len(self.channel_names)} entries for {self.channels.shape[0]} channels"
+            )
 
 
 @dataclass(frozen=True)
