@@ -1,7 +1,7 @@
 """Turns labeled beats + summary into the report content (plain data) and
 writes it as report.pdf - the only output file."""
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import numpy as np
 from canine_holter.types import Beat
@@ -13,7 +13,9 @@ from canine_holter.arrhythmia.burden import (
     HourRow,
     RunStats,
     pvc_runs,
+    run_stats,
 )
+from canine_holter.classify.rules import BASELINE_WINDOW
 from canine_holter.report.common import (
     EVENTS_TITLE,
     EXTREMES_TITLE,
@@ -24,6 +26,7 @@ from canine_holter.report.common import (
     format_time,
     isolated_pvcs,
     pvc_line,
+    run_center_time,
     section_heading,
     select_evenly,
     short_time,
@@ -64,12 +67,25 @@ class SummaryGroup:
 
 
 @dataclass(frozen=True)
+class StripCaption:
+    """The words under a strip's title: what it shows (with the measured
+    numbers behind the software's call) and whether it is significant,
+    with the status that colours the significance line."""
+    title: str
+    what: str
+    significance: str
+    status: str | None = None
+
+
+@dataclass(frozen=True)
 class StripSection:
     """One section of rhythm strips: a heading, the PVC runs shown (already
-    capped), and one label per run."""
+    capped), one label per run, and one caption per run."""
     heading: str
     runs: list[list[Beat]]
     labels: list[str]
+    captions: list[StripCaption]
+    pauses: list[tuple[float, float] | None] = field(default_factory=list)  # per run: a gap to bracket on the strip
 
 
 @dataclass(frozen=True)
@@ -198,7 +214,81 @@ def summary_groups(summary: ArrhythmiaSummary, start_time: datetime | None) -> l
     ]
 
 
-def _section(title: str, runs: list[list[Beat]], labeler, start_time: datetime | None) -> StripSection | None:
+ISOLATED_SIGNIFICANCE = "One PVC on its own is common in healthy dogs; what matters is the total per 24 h (page 1)."
+FASTEST_HR_SIGNIFICANCE = "Fast rates during play or excitement are expected; a rate this fast at rest is not."
+SLOWEST_HR_SIGNIFICANCE = "Resting dogs commonly slow to this (sinus arrhythmia)."
+PAUSE_SIGNIFICANCE = {
+    "ok": "Under 2.5 s: within the usual range for a resting dog.",
+    "caution": "Between 2.5 and 5 s: common in resting dogs with sinus arrhythmia.",
+    "alert": "Over 5 s, or any pause with fainting or collapse: worth a cardiologist's review.",
+}
+
+
+def _sec(value: float | None) -> str:
+    return f"{value:.2f} s" if value is not None else "n/a"
+
+
+def _typical(beats: list[Beat], index: int) -> tuple[float | None, float | None]:
+    """Median RR and QRS of the up-to-BASELINE_WINDOW normal beats before
+    index - the same baseline the classifier compared the beat with."""
+    previous = [
+        b for b in beats[max(0, index - 5 * BASELINE_WINDOW) : index]
+        if b.label == "N" and b.rr_interval and b.qrs_duration
+    ][-BASELINE_WINDOW:]
+    if not previous:
+        return None, None
+    return (
+        float(np.median([b.rr_interval for b in previous])),
+        float(np.median([b.qrs_duration for b in previous])),
+    )
+
+
+def _pvc_caption(index: int, run: list[Beat], beats: list[Beat], start_time: datetime | None) -> StripCaption:
+    """Caption for an isolated PVC, a couplet, a triplet, or a longer run."""
+    first_index = next(i for i, b in enumerate(beats) if b.time == run[0].time)
+    typical_rr, typical_qrs = _typical(beats, first_index)
+    n = len(run)
+    when = short_time(run_center_time(run), start_time)
+    if n == 1:
+        beat = run[0]
+        what = (
+            f"The marked beat arrived {_sec(beat.rr_interval)} after the beat before it (typical here"
+            f" {_sec(typical_rr)}) and its QRS lasts {_sec(beat.qrs_duration)} (typical {_sec(typical_qrs)}):"
+            " early and wide is what makes it a PVC."
+        )
+        return StripCaption(f"Isolated PVC {index + 1} · {when}", what, ISOLATED_SIGNIFICANCE)
+    if n < 4:
+        rrs = " and ".join(_sec(b.rr_interval) for b in run)
+        qrss = " and ".join(_sec(b.qrs_duration) for b in run)
+        what = (
+            f"The marked beats arrived {rrs} after the beat before them (typical here {_sec(typical_rr)}),"
+            f" with QRS of {qrss} (typical {_sec(typical_qrs)}): early and wide is what makes them PVCs."
+        )
+        kind = "couplet" if n == 2 else "triplet"
+        significance = f"Any {kind} is worth a cardiologist's review, whatever the PVC count."
+        return StripCaption(f"Event {index + 1} · {when}", what, significance, "alert")
+    stats = next((r for r in run_stats(beats) if r.start_time == run[0].time), None)
+    what = (
+        f"{n} beats in a row, each early and wide; the first arrived {_sec(run[0].rr_interval)} after the"
+        f" beat before it (typical here {_sec(typical_rr)})."
+    )
+    significance, status = _run_significance(n, stats.bpm if stats else None)
+    return StripCaption(f"Event {index + 1} · {when}", what, significance, status)
+
+
+def _run_significance(n: int, bpm: float | None) -> tuple[str, str]:
+    if bpm is None:
+        return f"{n} PVCs in a row; the rate could not be measured.", "caution"
+    if run_rate_status(bpm) == "alert":
+        return f"{n} PVCs in a row at {bpm:.0f} bpm is ventricular tachycardia.", "alert"
+    return (
+        f"{n} PVCs in a row at {bpm:.0f} bpm: an accelerated idioventricular rhythm, generally less"
+        " concerning than ventricular tachycardia.",
+        "caution",
+    )
+
+
+def _section(title: str, runs: list[list[Beat]], labeler, beats: list[Beat], start_time: datetime | None) -> StripSection | None:
     if not runs:
         return None
     shown = select_evenly(runs, MAX_STRIPS_PER_SECTION)
@@ -206,6 +296,8 @@ def _section(title: str, runs: list[list[Beat]], labeler, start_time: datetime |
         heading=section_heading(title, len(shown), len(runs)),
         runs=shown,
         labels=[labeler(i, run, start_time) for i, run in enumerate(shown)],
+        captions=[_pvc_caption(i, run, beats, start_time) for i, run in enumerate(shown)],
+        pauses=[None] * len(shown),
     )
 
 
@@ -228,21 +320,49 @@ def _extremes_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time:
     hr = summary.heart_rate
     if hr is None:
         return None
+    window = f"{HR_EXTREME_WINDOW_BEATS} beats"
     runs = [[_beat_at(beats, hr.max_time)], [_beat_at(beats, hr.min_time)]]
     labels = [
         f"Fastest heart rate: {hr.max_bpm:.0f} bpm at {format_time(hr.max_time, start_time)}",
         f"Slowest heart rate: {hr.min_bpm:.0f} bpm at {format_time(hr.min_time, start_time)}",
     ]
+    captions = [
+        StripCaption(
+            f"Fastest heart rate · {short_time(hr.max_time, start_time)}",
+            f"{hr.max_bpm:.0f} bpm averaged over {window}.",
+            FASTEST_HR_SIGNIFICANCE,
+        ),
+        StripCaption(
+            f"Slowest heart rate · {short_time(hr.min_time, start_time)}",
+            f"{hr.min_bpm:.0f} bpm averaged over {window}; the gaps between beats are printed in seconds.",
+            SLOWEST_HR_SIGNIFICANCE,
+        ),
+    ]
+    pauses: list[tuple[float, float] | None] = [None, None]
     if summary.pauses:
         pause = _pause_beats(beats, summary)
         runs.append(pause)
+        pauses.append((pause[0].time, pause[-1].time))
         labels.append(
             f"Longest pause: {summary.longest_pause_sec:.2f} s, ending at {format_time(pause[-1].time, start_time)}"
         )
+        status = pause_status(summary.longest_pause_sec)
+        captions.append(StripCaption(
+            f"Longest pause · {short_time(pause[-1].time, start_time)}",
+            f"No beat for {summary.longest_pause_sec:.2f} s.",
+            PAUSE_SIGNIFICANCE[status],
+            status,
+        ))
     if summary.fastest_run is not None:
-        runs.append(next(r for r in pvc_runs(beats) if r[0].time == summary.fastest_run.start_time))
+        run = next(r for r in pvc_runs(beats) if r[0].time == summary.fastest_run.start_time)
+        runs.append(run)
+        pauses.append(None)
         labels.append(f"Fastest run: {_run_text(summary.fastest_run, start_time)}")
-    return StripSection(heading=EXTREMES_TITLE, runs=runs, labels=labels)
+        caption = _pvc_caption(0, run, beats, start_time)
+        captions.append(StripCaption(
+            f"Fastest run · {short_time(run[0].time, start_time)}", caption.what, caption.significance, caption.status
+        ))
+    return StripSection(heading=EXTREMES_TITLE, runs=runs, labels=labels, captions=captions, pauses=pauses)
 
 
 def build_content(beats: list[Beat], summary: ArrhythmiaSummary, start_time: datetime | None) -> ReportContent:
@@ -253,8 +373,8 @@ def build_content(beats: list[Beat], summary: ArrhythmiaSummary, start_time: dat
     when start_time is known."""
     sections = [
         _extremes_section(beats, summary, start_time),
-        _section(EVENTS_TITLE, flagged_runs(beats), event_line, start_time),
-        _section(ISOLATED_TITLE, isolated_pvcs(beats), pvc_line, start_time),
+        _section(EVENTS_TITLE, flagged_runs(beats), event_line, beats, start_time),
+        _section(ISOLATED_TITLE, isolated_pvcs(beats), pvc_line, beats, start_time),
     ]
     return ReportContent(
         summary_groups=summary_groups(summary, start_time),
@@ -272,18 +392,25 @@ def write_report(
     samples: np.ndarray | None,
     sample_rate: float | None,
     start_time: datetime | None = None,
+    channels: np.ndarray | None = None,
+    channel_names: tuple[str, ...] = (),
 ) -> str:
     """Write report.pdf into out_dir and return its path. Nothing else is
-    written. Without waveform samples the strips are listed as text."""
+    written. Strips show every lead in channels, or the analysis lead alone
+    when only samples are given; without any waveform they are listed as
+    text."""
     os.makedirs(out_dir, exist_ok=True)
     pdf_path = os.path.join(out_dir, "report.pdf")
+    if channels is None and samples is not None:
+        channels, channel_names = samples[None, :], ("ECG",)
     write_pdf(
         pdf_path,
         content=build_content(beats, summary, start_time),
         beats=beats,
         summary=summary,
         start_time=start_time,
-        samples=samples,
+        channels=channels,
+        channel_names=channel_names,
         sample_rate=sample_rate,
     )
     return pdf_path

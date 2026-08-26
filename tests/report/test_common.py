@@ -34,3 +34,11 @@ def test_short_time_is_clock_with_start_and_elapsed_without():
 
     assert short_time(8183.2, datetime(2026, 8, 23, 15, 33, 8)) == "17:49:31"
     assert short_time(8183.2, None) == "t=8183s"
+
+
+def test_how_to_read_strips_covers_the_grid_the_leads_and_the_caveat():
+    from canine_holter.report.common import HOW_TO_READ_STRIPS
+
+    text = "\n".join(HOW_TO_READ_STRIPS)
+    assert "0.2 s" in text and "three" in text and "provisional" in text
+    assert all(len(line) <= 100 for line in HOW_TO_READ_STRIPS)
