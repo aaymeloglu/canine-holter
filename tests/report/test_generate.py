@@ -194,3 +194,33 @@ def test_extremes_section_omits_what_is_not_there():
 def test_no_extremes_section_when_heart_rate_not_computed():
     beats = _steady(3, 0.5)
     assert build_content(beats, summarize(beats), None).sections == []
+
+
+HOURLY_HEADER = ["Hour", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets", "Runs (3+)", "Pauses"]
+
+
+def test_hourly_table_rows_with_wall_clock_labels():
+    beats = _with_run(_steady(int(1.5 * 3600 / 0.5) + 1, 0.5), 100, 3, 0.25)  # 1.5 h at 120 bpm
+    start = datetime(2026, 8, 23, 15, 33, 8)
+    content = build_content(beats, summarize(beats), start)
+    assert content.hourly_header == HOURLY_HEADER
+    assert content.hourly_rows[0] == ["15:33-16:33", "7200", "120", "120", "120", "3", "0", "1", "0"]
+    assert content.hourly_rows[1][:2] == ["16:33-17:03", "3601"]
+
+
+def test_hourly_table_uses_elapsed_labels_without_a_start_time():
+    beats = _steady(int(1.5 * 3600 / 0.5) + 1, 0.5)
+    rows = build_content(beats, summarize(beats), None).hourly_rows
+    assert [r[0] for r in rows] == ["0:00-1:00", "1:00-1:30"]
+
+
+def test_hourly_table_blanks_rates_for_an_hour_with_too_few_beats():
+    beats = _steady(7200, 0.5) + [_beat(3700.0, 100.5, "N")]
+    rows = build_content(beats, summarize(beats), None).hourly_rows
+    assert rows[1] == ["1:00-1:01", "1", "-", "-", "-", "0", "0", "0", "1"]
+
+
+def test_hourly_table_empty_for_no_beats():
+    content = build_content([], summarize([]), None)
+    assert content.hourly_header == HOURLY_HEADER
+    assert content.hourly_rows == []
