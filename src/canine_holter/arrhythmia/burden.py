@@ -1,5 +1,7 @@
+import math
 from dataclasses import dataclass, field
 import numpy as np
+from canine_holter.quality.gate import SignalQuality
 from canine_holter.types import Beat
 
 # Provisional defaults - not yet calibrated against real canine recordings.
@@ -52,6 +54,7 @@ class HourRow:
     couplets: int
     runs: int
     pauses: int
+    analyzed_sec: float  # seconds of the hour not excluded by quality gating
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,9 @@ class ArrhythmiaSummary:
     longest_run: RunStats | None = None  # most beats; earliest on a tie
     fastest_run: RunStats | None = None  # highest bpm; earliest on a tie
     hourly: list[HourRow] = field(default_factory=list)
+    duration_sec: float = 0.0  # recording length; the last beat's time when no quality was given
+    analyzed_sec: float = 0.0  # duration minus excluded spans
+    excluded: tuple[tuple[float, float], ...] = ()  # artifact spans, from SignalQuality
 
 
 def pvc_runs(beats: list[Beat]) -> list[list[Beat]]:
@@ -130,17 +136,23 @@ def run_stats(beats: list[Beat]) -> list[RunStats]:
     return stats
 
 
-def hourly_rows(beats: list[Beat]) -> list[HourRow]:
-    """Per-hour counts and rates from the recording start; see HourRow."""
-    if not beats:
+def hourly_rows(
+    beats: list[Beat], duration_sec: float, quality: SignalQuality | None = None
+) -> list[HourRow]:
+    """Per-hour counts and rates from the recording start to duration_sec;
+    see HourRow. A beat exactly at a duration that falls on the hour still
+    gets its (zero-length) row rather than vanishing from the table."""
+    if not beats and duration_sec <= 0:
         return []
-    last = beats[-1].time
+    n_hours = math.ceil(duration_sec / HOUR_SEC) if duration_sec > 0 else 0
+    if beats:
+        n_hours = max(n_hours, int(beats[-1].time // HOUR_SEC) + 1)
     centers, window_rr = _windowed_rr(beats)
     runs = pvc_runs(beats)
     rows = []
-    for hour in range(int(last // HOUR_SEC) + 1):
+    for hour in range(n_hours):
         start = hour * HOUR_SEC
-        end = min(start + HOUR_SEC, last)
+        end = min(start + HOUR_SEC, max(duration_sec, start))
         in_hour = [b for b in beats if start <= b.time < start + HOUR_SEC]
         rr = np.array([b.rr_interval for b in in_hour if b.rr_interval])
         sel = (centers >= start) & (centers < start + HOUR_SEC)
@@ -157,6 +169,7 @@ def hourly_rows(beats: list[Beat]) -> list[HourRow]:
             couplets=sum(1 for r in hour_runs if len(r) == 2),
             runs=sum(1 for r in hour_runs if len(r) >= MIN_RUN_BEATS),
             pauses=sum(1 for b in in_hour if b.rr_interval and b.rr_interval >= PAUSE_THRESHOLD_SEC),
+            analyzed_sec=quality.analyzed_within(start, end) if quality else end - start,
         ))
     return rows
 
@@ -207,13 +220,23 @@ def _sustained_hr_events(
     return events
 
 
-def summarize(beats: list[Beat], dog_weight_class: str = "medium") -> ArrhythmiaSummary:
+def summarize(
+    beats: list[Beat], dog_weight_class: str = "medium", quality: SignalQuality | None = None
+) -> ArrhythmiaSummary:
     """Aggregate a labeled Beat sequence into an ArrhythmiaSummary.
 
     dog_weight_class: "small", "medium", or "large" - selects brady/tachy
     thresholds. These are provisional defaults; real calibration happens
     against Teeny's own recordings over time (see design spec).
+
+    quality: the recording's SignalQuality. Without it the duration is the
+    last beat's time and nothing is excluded (the report-only path).
     """
+    if quality is not None:
+        duration_sec, analyzed_sec, excluded = quality.duration_sec, quality.analyzed_sec, quality.excluded
+    else:
+        duration_sec = beats[-1].time if beats else 0.0
+        analyzed_sec, excluded = duration_sec, ()
     total_beats = len(beats)
     pvc_beats = [b for b in beats if b.label == "V"]
     pvc_count = len(pvc_beats)
@@ -256,5 +279,8 @@ def summarize(beats: list[Beat], dog_weight_class: str = "medium") -> Arrhythmia
         heart_rate=heart_rate_stats(beats),
         longest_run=longest_run,
         fastest_run=fastest_run,
-        hourly=hourly_rows(beats),
+        hourly=hourly_rows(beats, duration_sec, quality),
+        duration_sec=duration_sec,
+        analyzed_sec=analyzed_sec,
+        excluded=excluded,
     )
