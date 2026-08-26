@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 from canine_holter.types import Beat
 
@@ -10,6 +10,7 @@ TACHYCARDIA_HR_THRESHOLD = {"small": 180, "medium": 160, "large": 150}
 SUSTAINED_EVENT_MIN_BEATS = 3  # consecutive beats needed to call it "sustained"
 HR_EXTREME_WINDOW_BEATS = 5  # min/max HR are medians over this many RRs, so one phantom beat can't set them
 MIN_RUN_BEATS = 3  # triplets and longer; a couplet has only one within-run RR
+HOUR_SEC = 3600.0
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,25 @@ class RunStats:
 
 
 @dataclass(frozen=True)
+class HourRow:
+    """One hour of the recording, counted from its start (the last row is
+    the partial hour to the final beat). A beat on the boundary belongs to
+    the hour it starts; runs and couplets count in the hour of their first
+    beat. Rates are None for an hour with fewer than HR_EXTREME_WINDOW_BEATS
+    RR intervals; min/max use the same windowed medians as HeartRateStats."""
+    start_sec: float
+    end_sec: float
+    beats: int
+    min_bpm: float | None
+    mean_bpm: float | None
+    max_bpm: float | None
+    pvcs: int
+    couplets: int
+    runs: int
+    pauses: int
+
+
+@dataclass(frozen=True)
 class ArrhythmiaSummary:
     total_beats: int
     pvc_count: int
@@ -49,6 +69,7 @@ class ArrhythmiaSummary:
     heart_rate: HeartRateStats | None = None  # None when too few RRs for a window
     longest_run: RunStats | None = None  # most beats; earliest on a tie
     fastest_run: RunStats | None = None  # highest bpm; earliest on a tie
+    hourly: list[HourRow] = field(default_factory=list)
 
 
 def pvc_runs(beats: list[Beat]) -> list[list[Beat]]:
@@ -67,17 +88,27 @@ def pvc_runs(beats: list[Beat]) -> list[list[Beat]]:
     return runs
 
 
-def heart_rate_stats(beats: list[Beat]) -> HeartRateStats | None:
-    """Min/mean/max heart rate over the recording, or None with fewer than
-    HR_EXTREME_WINDOW_BEATS RR intervals."""
+def _windowed_rr(beats: list[Beat]) -> tuple[np.ndarray, np.ndarray]:
+    """Median RR over each HR_EXTREME_WINDOW_BEATS consecutive RRs, with the
+    time of the window's centre beat. Empty with too few RRs."""
     timed = [(b.time, b.rr_interval) for b in beats if b.rr_interval]
     if len(timed) < HR_EXTREME_WINDOW_BEATS:
-        return None
+        return np.array([]), np.array([])
     times = np.array([t for t, _ in timed])
     rr = np.array([r for _, r in timed])
     windows = np.lib.stride_tricks.sliding_window_view(rr, HR_EXTREME_WINDOW_BEATS)
     window_rr = np.median(windows, axis=1)
     centers = times[HR_EXTREME_WINDOW_BEATS // 2 : HR_EXTREME_WINDOW_BEATS // 2 + len(window_rr)]
+    return centers, window_rr
+
+
+def heart_rate_stats(beats: list[Beat]) -> HeartRateStats | None:
+    """Min/mean/max heart rate over the recording, or None with fewer than
+    HR_EXTREME_WINDOW_BEATS RR intervals."""
+    centers, window_rr = _windowed_rr(beats)
+    if len(window_rr) == 0:
+        return None
+    rr = np.array([b.rr_interval for b in beats if b.rr_interval])
     slowest, fastest = int(np.argmax(window_rr)), int(np.argmin(window_rr))
     return HeartRateStats(
         min_bpm=60.0 / float(window_rr[slowest]),
@@ -97,6 +128,37 @@ def run_stats(beats: list[Beat]) -> list[RunStats]:
         if len(run) >= MIN_RUN_BEATS and rrs:
             stats.append(RunStats(beats=len(run), bpm=60.0 / float(np.mean(rrs)), start_time=run[0].time))
     return stats
+
+
+def hourly_rows(beats: list[Beat]) -> list[HourRow]:
+    """Per-hour counts and rates from the recording start; see HourRow."""
+    if not beats:
+        return []
+    last = beats[-1].time
+    centers, window_rr = _windowed_rr(beats)
+    runs = pvc_runs(beats)
+    rows = []
+    for hour in range(int(last // HOUR_SEC) + 1):
+        start = hour * HOUR_SEC
+        end = min(start + HOUR_SEC, last)
+        in_hour = [b for b in beats if start <= b.time < start + HOUR_SEC]
+        rr = np.array([b.rr_interval for b in in_hour if b.rr_interval])
+        sel = (centers >= start) & (centers < start + HOUR_SEC)
+        enough = len(rr) >= HR_EXTREME_WINDOW_BEATS and sel.any()
+        hour_runs = [r for r in runs if start <= r[0].time < start + HOUR_SEC]
+        rows.append(HourRow(
+            start_sec=float(start),
+            end_sec=float(end),
+            beats=len(in_hour),
+            min_bpm=60.0 / float(window_rr[sel].max()) if enough else None,
+            mean_bpm=60.0 / float(rr.mean()) if enough else None,
+            max_bpm=60.0 / float(window_rr[sel].min()) if enough else None,
+            pvcs=sum(1 for b in in_hour if b.label == "V"),
+            couplets=sum(1 for r in hour_runs if len(r) == 2),
+            runs=sum(1 for r in hour_runs if len(r) >= MIN_RUN_BEATS),
+            pauses=sum(1 for b in in_hour if b.rr_interval and b.rr_interval >= PAUSE_THRESHOLD_SEC),
+        ))
+    return rows
 
 
 def _sustained_hr_events(
@@ -194,4 +256,5 @@ def summarize(beats: list[Beat], dog_weight_class: str = "medium") -> Arrhythmia
         heart_rate=heart_rate_stats(beats),
         longest_run=longest_run,
         fastest_run=fastest_run,
+        hourly=hourly_rows(beats),
     )

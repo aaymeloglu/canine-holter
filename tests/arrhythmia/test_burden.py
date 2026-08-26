@@ -265,3 +265,51 @@ def test_couplets_and_singles_do_not_count_as_runs():
     s = summarize(beats)
     assert s.longest_run is None and s.fastest_run is None
     assert summarize([]).longest_run is None
+
+
+def _hours_of_beats(hours, rr):
+    return _steady(int(hours * 3600 / rr) + 1, rr)
+
+
+def test_hourly_rows_bin_from_recording_start_and_keep_the_partial_last_hour():
+    beats = _hours_of_beats(2.5, 0.5)  # beats at 0, 0.5, ..., 9000.0
+    rows = summarize(beats).hourly
+    assert [r.start_sec for r in rows] == [0.0, 3600.0, 7200.0]
+    assert [r.end_sec for r in rows] == [3600.0, 7200.0, 9000.0]
+    # A beat on the boundary belongs to the hour it starts.
+    assert [r.beats for r in rows] == [7200, 7200, 3601]
+
+
+def test_hourly_rows_count_pvcs_couplets_runs_and_pauses_in_their_hour():
+    beats = _hours_of_beats(2.0, 0.5)
+    beats = _with_run(beats, 100, 1, 0.3)          # isolated PVC, hour 0
+    beats = _with_run(beats, 200, 2, 0.3)          # couplet, hour 0
+    beats = _with_run(beats, 7300, 4, 0.3)         # run, hour 1
+    i = 8000
+    beats[i] = Beat(time=beats[i].time, rr_interval=3.0, qrs_duration=0.08, label="N")  # pause, hour 1
+    rows = summarize(beats).hourly
+    assert (rows[0].pvcs, rows[0].couplets, rows[0].runs, rows[0].pauses) == (3, 1, 0, 0)
+    assert (rows[1].pvcs, rows[1].couplets, rows[1].runs, rows[1].pauses) == (4, 0, 1, 1)
+
+
+def test_hourly_rows_have_min_mean_max_heart_rate_per_hour():
+    fast = _steady(7200, 0.5)                  # hour 0 at 120 bpm, last beat at 3599.5
+    t = fast[-1].time
+    slow = [Beat(time=t + (k + 1) * 1.0, rr_interval=1.0, qrs_duration=0.08, label="N") for k in range(3600)]
+    rows = summarize(fast + slow).hourly
+    assert (rows[0].min_bpm, rows[0].max_bpm) == (120.0, 120.0)
+    assert abs(rows[0].mean_bpm - 120.0) < 1e-9
+    assert (rows[1].min_bpm, rows[1].max_bpm) == (60.0, 60.0)
+    assert abs(rows[1].mean_bpm - 60.0) < 1e-9
+
+
+def test_hourly_row_heart_rate_is_none_when_the_hour_has_too_few_beats():
+    beats = _steady(7200, 0.5)  # hour 0 only; last beat at 3599.5
+    beats.append(Beat(time=3700.0, rr_interval=100.5, qrs_duration=0.08, label="N"))
+    rows = summarize(beats).hourly
+    assert rows[1].beats == 1
+    assert rows[1].min_bpm is None and rows[1].mean_bpm is None and rows[1].max_bpm is None
+
+
+def test_hourly_rows_empty_for_no_beats():
+    assert summarize([]).hourly == []
