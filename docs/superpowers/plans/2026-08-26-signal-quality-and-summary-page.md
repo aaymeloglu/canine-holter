@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Exclude non-analyzable stretches of a recording (off-body, lead-off, flat, hookup/removal), report time analyzed per recording and per hour, and redraw the summary page as four colour-coded panels with the reference band beside each value.
+**Goal:** Exclude non-analyzable stretches of a recording (off-body, lead-off, flat, hookup/removal), report time analyzed per recording and per hour, and redraw the summary page as four color-coded panels with the reference band beside each value.
 
-**Architecture:** A new `quality/` stage turns samples into a frozen `SignalQuality` (duration + excluded spans); `exclude_beats` applies it to the detector's beats; `summarize` carries duration/analyzed/excluded through `ArrhythmiaSummary`; the report reads only those. The summary page becomes `SummaryGroup`/`SummaryRow` data rendered as a 2x2 grid; the reference-ranges block collapses into inline bands, status colours, and a two-line footer.
+**Architecture:** A new `quality/` stage turns samples into a frozen `SignalQuality` (duration + excluded spans); `exclude_beats` applies it to the detector's beats; `summarize` carries duration/analyzed/excluded through `ArrhythmiaSummary`; the report reads only those. The summary page becomes `SummaryGroup`/`SummaryRow` data rendered as a 2x2 grid; the reference-ranges block collapses into inline bands, status colors, and a two-line footer.
 
 **Tech Stack:** Python 3.11, numpy, matplotlib (PdfPages), pytest. Spec: `docs/superpowers/specs/2026-08-26-signal-quality-and-summary-page-design.md`.
 
@@ -25,7 +25,7 @@
 | Modify `src/canine_holter/report/timeline.py` | grey hatched bands for excluded spans, axis to recording end |
 | Modify `src/canine_holter/pipeline.py` | wire quality between ingest and detection |
 | Modify `tests/conftest.py`, `tests/test_pipeline.py`, `tests/test_cli.py`, `tests/report/*`, `tests/arrhythmia/test_burden.py` | new text shape |
-| Modify `CLAUDE.md`, `README.md`, `docs/superpowers/specs/2026-08-24-phantom-beats-pvc-strips-reference-ranges-design.md` | quality stage in the architecture, colour-coding is expected, old non-goal superseded |
+| Modify `CLAUDE.md`, `README.md`, `docs/superpowers/specs/2026-08-24-phantom-beats-pvc-strips-reference-ranges-design.md` | quality stage in the architecture, color-coding is expected, old non-goal superseded |
 
 ---
 
@@ -604,7 +604,7 @@ COUNT_BAND = "0"
 ANALYZED_BAND = f">= {MIN_HOURS_FOR_24H_SCALING} h"
 
 FOOTER_LINES = [
-    "Colours compare each value with the band printed beside it: green inside the normal band,"
+    "Colors compare each value with the band printed beside it: green inside the normal band,"
     " amber in the equivocal band, red beyond it. They are not a diagnosis.",
     "Bands: ESVC Doberman DCM screening guidelines (Wess et al., J Vet Cardiol 2017);"
     " pause and run-rate context from canine Holter studies.",
@@ -727,7 +727,7 @@ def test_ectopy_group_values_references_and_statuses():
     assert rows["Fastest run"] == SummaryRow("Fastest run", "none", "<180 bpm", "ok")
 
 
-def test_ectopy_group_scales_pvcs_by_analyzed_time_and_colours_the_band():
+def test_ectopy_group_scales_pvcs_by_analyzed_time_and_colors_the_band():
     beats = [_beat(i * 0.5, 0.5 if i else None, "V" if i % 100 == 0 else "N") for i in range(0, 24 * 3600 * 2)]
     q = SignalQuality(24 * 3600.0, ((0.0, 4 * 3600.0),))  # 20 h analyzed
     rows = _rows(build_content(beats, summarize(beats, quality=q), None), "Ventricular ectopy")
@@ -843,7 +843,7 @@ class SummaryRow:
     label: str
     value: str
     reference: str = ""
-    status: str | None = None  # "ok" | "caution" | "alert" | None (uncoloured)
+    status: str | None = None  # "ok" | "caution" | "alert" | None (uncolored)
 
 
 @dataclass(frozen=True)
@@ -1054,8 +1054,8 @@ def test_summary_page_renders_groups_with_statuses_and_footer():
     texts = [t.get_text() for t in fig.texts]
     assert "RECORDING" in texts and "VENTRICULAR ECTOPY" in texts
     assert "Couplets" in texts and "1" in texts
-    coloured = {t.get_text(): t.get_color() for t in fig.texts if t.get_color() in STATUS_COLORS.values()}
-    assert coloured["1"] == STATUS_COLORS["alert"]
+    colored = {t.get_text(): t.get_color() for t in fig.texts if t.get_color() in STATUS_COLORS.values()}
+    assert colored["1"] == STATUS_COLORS["alert"]
     assert any("not a diagnosis" in t for t in texts)
     plt.close(fig)
 ```
@@ -1155,7 +1155,7 @@ Expected: all pass. Page counts in `test_pdf.py` are unchanged (summary page is 
 
 ```bash
 git add src/canine_holter/report/pdf.py src/canine_holter/report/timeline.py tests/report/test_pdf.py tests/report/test_timeline.py
-git commit -m "PDF: 2x2 summary panels with status colours; timeline shades excluded spans"
+git commit -m "PDF: 2x2 summary panels with status colors; timeline shades excluded spans"
 ```
 
 ---
@@ -1246,7 +1246,7 @@ git commit -m "Pipeline: gate signal quality before detection; report analyzed t
 
 - [ ] **Step 1: CLAUDE.md**
 
-In "What this is", after the disclaimer sentence, replace "Do not add language anywhere (reports, README, docstrings) that implies diagnostic authority." with: "Comparing numbers with published reference bands - including colour-coding them - is expected; the disclaimer is what carries the not-a-diagnosis framing, and it must stay."
+In "What this is", after the disclaimer sentence, replace "Do not add language anywhere (reports, README, docstrings) that implies diagnostic authority." with: "Comparing numbers with published reference bands - including color-coding them - is expected; the disclaimer is what carries the not-a-diagnosis framing, and it must stay."
 
 In "Architecture", the flow becomes:
 
@@ -1263,17 +1263,17 @@ Add to "Known limits": "Quality gating catches severe artifact (off-body swings,
 
 - [ ] **Step 2: README.md**
 
-Replace the report paragraph's reference-range sentence with: "Page 1 is four panels (recording, heart rate, ventricular ectopy, pauses); each value sits beside the ESVC Doberman screening band it is compared with and is coloured green / amber / red by where it falls. The recording panel states how much of the recording was analyzed: the first and last minute and any off-body, flat, or saturated stretches are excluded, and the timeline shades them."
+Replace the report paragraph's reference-range sentence with: "Page 1 is four panels (recording, heart rate, ventricular ectopy, pauses); each value sits beside the ESVC Doberman screening band it is compared with and is colored green / amber / red by where it falls. The recording panel states how much of the recording was analyzed: the first and last minute and any off-body, flat, or saturated stretches are excluded, and the timeline shades them."
 
 - [ ] **Step 3: Old spec**
 
-In `2026-08-24-phantom-beats-pvc-strips-reference-ranges-design.md`, under Non-goals, change the wording bullet to: "~~Any wording that implies a diagnosis...~~ Superseded 2026-08-26: values are colour-coded against the published bands; see `2026-08-26-signal-quality-and-summary-page-design.md`."
+In `2026-08-24-phantom-beats-pvc-strips-reference-ranges-design.md`, under Non-goals, change the wording bullet to: "~~Any wording that implies a diagnosis...~~ Superseded 2026-08-26: values are color-coded against the published bands; see `2026-08-26-signal-quality-and-summary-page-design.md`."
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add CLAUDE.md README.md docs/superpowers/specs/2026-08-24-phantom-beats-pvc-strips-reference-ranges-design.md
-git commit -m "Docs: quality stage, colour-coded bands, retire the never-normal-or-abnormal rule"
+git commit -m "Docs: quality stage, color-coded bands, retire the never-normal-or-abnormal rule"
 ```
 
 ---

@@ -25,7 +25,7 @@ below it is a paragraph a reader has to cross-reference by hand.
    excluded, and never let an excluded stretch produce a pause, a
    brady/tachy event, a run, or a beat.
 2. Summary page as four titled panels in a 2x2 grid, each value beside
-   the published band it is compared with, coloured by where it falls.
+   the published band it is compared with, colored by where it falls.
 3. Keep the pipeline's boundary contract: quality talks to the rest of the
    pipeline through one frozen dataclass.
 
@@ -154,7 +154,7 @@ class SummaryRow:
     label: str
     value: str
     reference: str = ""          # short band text printed beside the value, e.g. "<50 | 50-300 | >300"
-    status: str | None = None    # "ok" | "caution" | "alert" | None (uncoloured)
+    status: str | None = None    # "ok" | "caution" | "alert" | None (uncolored)
 
 @dataclass(frozen=True)
 class SummaryGroup:
@@ -169,18 +169,18 @@ Pauses):
 |---|---|---|
 | Recording | Start; Duration; Analyzed (h m, % of duration); Excluded (h m, "artifact / off-body"); Beats | Analyzed: ok >= 20 h, caution below (the 24 h bands need it) |
 | Heart rate | Mean; Slowest (bpm at time); Fastest (bpm at time); Brady events; Tachy events | none (no published Doberman band; brady/tachy thresholds are provisional) |
-| Ventricular ectopy | PVCs (count, burden %); per 24 h [<50 \| 50-300 \| >300]; Couplets [0]; Triplets [0]; VT runs 4+ [0]; Longest run; Fastest run [<180 bpm] | per 24 h: ok <50, caution 50-300, alert >300, uncoloured "n/a" when analyzed < 20 h. Couplets/Triplets/VT runs: ok 0, alert >= 1. Fastest run: ok none, caution < 180 bpm, alert >= 180 |
-| Pauses | Pauses >= 2.5 s (count); Longest [<2.5 \| 2.5-5 \| >5 s] | Longest: ok < 2.5, caution 2.5-5, alert > 5; count uncoloured |
+| Ventricular ectopy | PVCs (count, burden %); per 24 h [<50 \| 50-300 \| >300]; Couplets [0]; Triplets [0]; VT runs 4+ [0]; Longest run; Fastest run [<180 bpm] | per 24 h: ok <50, caution 50-300, alert >300, uncolored "n/a" when analyzed < 20 h. Couplets/Triplets/VT runs: ok 0, alert >= 1. Fastest run: ok none, caution < 180 bpm, alert >= 180 |
+| Pauses | Pauses >= 2.5 s (count); Longest [<2.5 \| 2.5-5 \| >5 s] | Longest: ok < 2.5, caution 2.5-5, alert > 5; count uncolored |
 
-Colours: ok `#2e7d32`, caution `#b26a00`, alert `#c62828`; reference text
+Colors: ok `#2e7d32`, caution `#b26a00`, alert `#c62828`; reference text
 8 pt grey. Below the panels, two lines replace the old block: a legend
-("Colours compare each value with the band printed beside it (ESVC
+("Colors compare each value with the band printed beside it (ESVC
 Doberman DCM screening guidelines, Wess et al. 2017). They are not a
 diagnosis.") and the disclaimer already at the top stays where it is.
 
 The "never normal or abnormal" wording is removed from `reference.py`, the
 README, and the earlier spec's non-goals; CLAUDE.md gets a sentence saying
-colour-coding against published bands is expected and the disclaimer is
+color-coding against published bands is expected and the disclaimer is
 what carries the not-a-diagnosis framing.
 
 ### Timeline and hourly table

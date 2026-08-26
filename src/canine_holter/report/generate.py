@@ -54,7 +54,7 @@ class SummaryRow:
     label: str
     value: str
     reference: str = ""
-    status: str | None = None  # "ok" | "caution" | "alert" | None (uncoloured)
+    status: str | None = None  # "ok" | "caution" | "alert" | None (uncolored)
 
 
 @dataclass(frozen=True)

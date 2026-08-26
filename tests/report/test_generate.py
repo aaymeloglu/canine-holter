@@ -199,7 +199,7 @@ def test_ectopy_group_values_references_and_statuses():
     assert rows["Fastest run"] == SummaryRow("Fastest run", "none", "<180 bpm", "ok")
 
 
-def test_ectopy_group_scales_pvcs_by_analyzed_time_and_colours_the_band():
+def test_ectopy_group_scales_pvcs_by_analyzed_time_and_colors_the_band():
     beats = _steady(24 * 3600 * 2, 0.5)  # 24 h at 120 bpm
     beats = [_beat(b.time, b.rr_interval, "V" if i % 100 == 0 else "N") for i, b in enumerate(beats)]
     q = SignalQuality(24 * 3600.0, ((0.0, 4 * 3600.0),))  # 20 h analyzed
@@ -232,7 +232,7 @@ def test_heart_rate_group_says_when_not_computed():
     assert rows["Heart rate"].value == "not computed (fewer than 5 beats with an RR)"
 
 
-def test_pause_group_counts_and_colours_the_longest():
+def test_pause_group_counts_and_colors_the_longest():
     beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(3.77, 2.97, "N")]
     rows = _rows(build_content(beats, summarize(beats), None), "Pauses")
     assert rows["Pauses"] == SummaryRow("Pauses", "1", ">= 2.5 s")

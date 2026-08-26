@@ -130,7 +130,7 @@ def test_hourly_table_spills_to_its_own_page_past_the_first_page_rows():
     assert _write_hours(26.5) == _BASE_PAGES + 1  # 27 rows: 26 under the timeline, 1 on a new page
 
 
-def test_summary_page_renders_groups_with_status_colours_and_footer():
+def test_summary_page_renders_groups_with_status_colors_and_footer():
     import matplotlib.pyplot as plt
     from canine_holter.report.pdf import STATUS_COLORS, _summary_page
 

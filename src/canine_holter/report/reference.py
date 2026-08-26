@@ -26,7 +26,7 @@ COUNT_BAND = "0"
 ANALYZED_BAND = f">= {MIN_HOURS_FOR_24H_SCALING} h"
 
 FOOTER_LINES = [  # kept under ~105 characters each: they print at 8 pt across the page
-    "Colours compare each value with the band printed beside it: green inside the normal band, amber in the",
+    "Colors compare each value with the band printed beside it: green inside the normal band, amber in the",
     "equivocal band, red beyond it. They are not a diagnosis.",
     "Bands: ESVC Doberman DCM screening guidelines (Wess et al., J Vet Cardiol 2017); pause and run-rate",
     "context from canine Holter studies.",
