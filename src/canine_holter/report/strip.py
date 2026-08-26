@@ -28,7 +28,9 @@ TRACE_COLOR = "#1a1a1a"
 GRID_MINOR_COLOR = "#f6d5d5"  # 1 mm squares
 GRID_MAJOR_COLOR = "#e8a3a3"  # 5 mm squares
 _BAND_BEFORE_SEC, _BAND_AFTER_SEC = 0.08, 0.12  # shading around a flagged R-peak: covers the QRS
-_LABEL_Y, _RR_Y = 1.10, 1.02  # axes-fraction rows above the top panel
+_LABEL_Y = 1.20  # axes-fraction row of beat labels above the top panel
+_RR_ROWS = (1.02, 1.10)  # RR texts alternate between two rows so neighbours at fast rates do not collide
+SPARSE_STRIP_BEATS = 8  # at most this many beats in the window: print every RR, the gaps are the point
 
 
 def strip_window(center_time: float, mark_times: Sequence[float], duration_sec: float) -> tuple[float, float]:
@@ -105,7 +107,7 @@ def draw_strip(
         _grid(ax)
         for mark in mark_times:
             ax.axvspan(mark - start - _BAND_BEFORE_SEC, mark - start + _BAND_AFTER_SEC, color=MARK_COLOR, alpha=0.15, linewidth=0)
-        name = channel_names[i] + (" (analysis)" if i == analysis_channel else "")
+        name = channel_names[i] + ("\n(analysis)" if i == analysis_channel else "")
         ax.set_ylabel(name, rotation=0, ha="right", va="center", fontsize=8, labelpad=6)
         last = i == n_channels - 1
         ax.tick_params(labelleft=False, left=False, labelbottom=last, bottom=last, which="both", labelsize=7)
@@ -121,12 +123,16 @@ def draw_strip(
             beat.time - start, _LABEL_Y, label, transform=trans, ha="center", va="bottom", fontsize=8,
             fontweight="bold" if label == "V" else "normal", color=MARK_COLOR if label == "V" else LABEL_COLOR,
         )
-    marked = {i for i, b in enumerate(in_window) for m in mark_times if abs(b.time - m) < 1e-6}
-    for j in sorted({j for i in marked for j in (i, i + 1) if 0 < j < len(in_window)}):
+    if len(in_window) <= SPARSE_STRIP_BEATS:
+        rr_indices = list(range(1, len(in_window)))
+    else:
+        marked = {i for i, b in enumerate(in_window) for m in mark_times if abs(b.time - m) < 1e-6}
+        rr_indices = sorted({j for i in marked for j in (i, i + 1) if 0 < j < len(in_window)})
+    for k, j in enumerate(rr_indices):
         rr = in_window[j].rr_interval
         if rr:
             x = (in_window[j - 1].time + in_window[j].time) / 2 - start
-            top.text(x, _RR_Y, f"{rr:.2f} s", transform=trans, ha="center", va="bottom", fontsize=6.5, color=LABEL_COLOR)
+            top.text(x, _RR_ROWS[k % 2], f"{rr:.2f} s", transform=trans, ha="center", va="bottom", fontsize=6.5, color=LABEL_COLOR)
     if pause is not None:
         gap_start, gap_end = pause
         y = sum(top.get_ylim()) / 2

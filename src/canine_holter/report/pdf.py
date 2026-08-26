@@ -46,6 +46,7 @@ _PANEL_W = 0.42
 _VALUE_DX = 0.12  # value column offset inside a panel
 _PANEL_TOP = (0.86, 0.68)  # top of each panel row
 
+_STRIP_LEFT = 0.17  # leaves room for the lead names left of the strip
 _STRIP_W = STRIP_WIDTH_MM / _PAGE_MM[0]  # 6 s at 25 mm/s, as a figure fraction
 _CHANNEL_H = CHANNEL_HEIGHT_MM / _PAGE_MM[1]  # 3 mV at 10 mm/mV, per lead
 _STRIP_SLOT = 0.45  # figure fraction per strip (caption + leads); two per page
@@ -176,9 +177,9 @@ def _strip_page(
             color=STATUS_COLORS.get(caption.status or "", "black"),
             fontweight="bold" if caption.status else "normal",
         )
-        y -= _CAPTION_STEP + 0.035  # room for the beat-label row above the top lead
+        y -= _CAPTION_STEP + 0.04  # room for the beat-label and RR rows above the top lead
         height = _CHANNEL_H * channels.shape[0]
-        gs = GridSpec(1, 1, figure=fig, left=_LEFT, right=_LEFT + _STRIP_W, top=y, bottom=y - height)
+        gs = GridSpec(1, 1, figure=fig, left=_STRIP_LEFT, right=_STRIP_LEFT + _STRIP_W, top=y, bottom=y - height)
         axes = draw_strip(
             fig, gs[0], channels, channel_names, sample_rate, run_center_time(run), beats,
             mark_times=[b.time for b in run], pause=pause,
@@ -186,7 +187,7 @@ def _strip_page(
         window = axes[0].get_xlim()[1]
         range_mv = axes[0].get_ylim()[1] - axes[0].get_ylim()[0]
         fig.text(
-            _LEFT + _STRIP_W, 0.90 - slot * _STRIP_SLOT, scale_label(window, range_mv),
+            _STRIP_LEFT + _STRIP_W, 0.90 - slot * _STRIP_SLOT, scale_label(window, range_mv),
             va="top", ha="right", fontsize=7.5, color=REFERENCE_COLOR,
         )
     return fig

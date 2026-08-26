@@ -56,7 +56,7 @@ def test_channel_range_grows_to_the_next_millivolt_above_the_tallest_lead():
 def test_one_panel_per_lead_with_the_analysis_lead_named():
     fig, axes = _draw(_channels(3), _steady(100), center_time=10.0, mark_times=[10.4])
     assert len(axes) == 3
-    assert axes[0].get_ylabel() == "Ch 1 (analysis)"
+    assert axes[0].get_ylabel() == "Ch 1\n(analysis)"
     assert axes[1].get_ylabel() == "Ch 2"
     assert axes[0].get_shared_x_axes().joined(axes[0], axes[2])
     plt.close(fig)
@@ -90,11 +90,18 @@ def test_beats_in_the_window_get_labels_and_flagged_beats_get_bands_on_every_lea
     plt.close(fig)
 
 
-def test_rr_intervals_are_printed_around_the_flagged_beat():
-    beats = _steady(100)
-    beats[13] = _beat(beats[13].time, 0.8, "V")
-    fig, axes = _draw(_channels(1), beats, center_time=10.4, mark_times=[10.4])
-    assert _texts(axes[0]).count("0.80 s") == 2  # the RR into the beat and the RR out of it
+def test_rr_intervals_are_printed_around_the_flagged_beat_in_a_busy_strip():
+    beats = _steady(100, 0.5)  # 12 beats per window: only the RRs around the mark are printed
+    beats[20] = _beat(beats[20].time, 0.5, "V")
+    fig, axes = _draw(_channels(1), beats, center_time=10.0, mark_times=[10.0])
+    assert _texts(axes[0]).count("0.50 s") == 2  # the RR into the beat and the RR out of it
+    plt.close(fig)
+
+
+def test_every_rr_is_printed_in_a_sparse_strip():
+    beats = _steady(100, 1.5)  # 4-5 beats per window: the gaps are the point, print them all
+    fig, axes = _draw(_channels(1), beats, center_time=30.0, mark_times=[30.0])
+    assert _texts(axes[0]).count("1.50 s") >= 3
     plt.close(fig)
 
 
