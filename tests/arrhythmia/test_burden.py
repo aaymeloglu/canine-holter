@@ -185,3 +185,83 @@ def test_longest_pause_is_none_when_no_beat_has_an_rr():
     beats = [Beat(time=0.0, rr_interval=None, qrs_duration=0.08, label="N")]
     assert summarize(beats).longest_pause_sec is None
     assert summarize([]).longest_pause_sec is None
+
+
+def _steady(n, rr, label="N"):
+    return [Beat(time=i * rr, rr_interval=rr if i else None, qrs_duration=0.08, label=label) for i in range(n)]
+
+
+def test_heart_rate_min_mean_max_with_times():
+    # 10 beats at 0.5 s (120 bpm), then 10 at 1.0 s (60 bpm), then 10 at 0.25 s (240 bpm).
+    beats = _steady(10, 0.5)
+    t = beats[-1].time
+    for i in range(10):
+        t += 1.0
+        beats.append(Beat(time=t, rr_interval=1.0, qrs_duration=0.08, label="N"))
+    for i in range(10):
+        t += 0.25
+        beats.append(Beat(time=t, rr_interval=0.25, qrs_duration=0.08, label="N"))
+    hr = summarize(beats).heart_rate
+    assert hr.min_bpm == 60.0
+    assert hr.max_bpm == 240.0
+    # Mean is over the whole recording: 29 RR intervals spanning 4.5 + 10 + 2.5 s.
+    assert abs(hr.mean_bpm - 60.0 * 29 / 17.0) < 1e-9
+    # Extremes sit inside their plateau, not at its boundary beats.
+    assert 4.5 + 1.0 <= hr.min_time <= 14.5
+    assert 14.5 + 0.25 <= hr.max_time <= 17.0
+
+
+def test_heart_rate_extremes_are_five_beat_medians_so_one_phantom_beat_cannot_set_them():
+    beats = _steady(30, 0.5)  # 120 bpm throughout
+    # One phantom beat splits an RR into 0.1 + 0.4 s (600 bpm instantaneous).
+    phantom = Beat(time=10.1, rr_interval=0.1, qrs_duration=0.08, label="U")
+    following = Beat(time=10.5, rr_interval=0.4, qrs_duration=0.08, label="N")
+    beats = [b for b in beats if b.time != 10.5] + [phantom, following]
+    beats.sort(key=lambda b: b.time)
+    hr = summarize(beats).heart_rate
+    assert hr.max_bpm == 120.0
+    assert hr.min_bpm == 120.0
+
+
+def test_heart_rate_is_none_when_fewer_than_five_rr_intervals():
+    assert summarize(_steady(5, 0.5)).heart_rate is None  # 4 RR intervals
+    assert summarize([]).heart_rate is None
+    assert summarize(_steady(6, 0.5)).heart_rate is not None  # 5 RR intervals
+
+
+def _with_run(beats, start_index, n, rr):
+    """Replace beats from start_index with an n-beat PVC run at rr within the run."""
+    out = list(beats)
+    t = beats[start_index].time
+    for k in range(n):
+        out[start_index + k] = Beat(time=t + k * rr, rr_interval=beats[start_index].rr_interval if k == 0 else rr,
+                                    qrs_duration=0.12, label="V")
+    return out
+
+
+def test_longest_and_fastest_runs():
+    beats = _steady(100, 0.5)
+    beats = _with_run(beats, 10, 3, 0.4)   # triplet at 150 bpm
+    beats = _with_run(beats, 30, 5, 0.3)   # 5-beat run at 200 bpm
+    beats = _with_run(beats, 60, 4, 0.25)  # 4-beat run at 240 bpm
+    s = summarize(beats)
+    assert s.longest_run.beats == 5
+    assert abs(s.longest_run.bpm - 200.0) < 1e-9
+    assert s.longest_run.start_time == beats[30].time
+    assert s.fastest_run.beats == 4
+    assert abs(s.fastest_run.bpm - 240.0) < 1e-9
+    assert s.fastest_run.start_time == beats[60].time
+
+
+def test_run_rate_uses_only_the_rr_intervals_inside_the_run():
+    # The first beat's RR is the coupling interval to the preceding normal beat
+    # and says nothing about the run's own rate.
+    beats = _with_run(_steady(20, 0.5), 5, 3, 0.2)
+    assert abs(summarize(beats).fastest_run.bpm - 300.0) < 1e-9
+
+
+def test_couplets_and_singles_do_not_count_as_runs():
+    beats = _with_run(_steady(20, 0.5), 5, 2, 0.2)
+    s = summarize(beats)
+    assert s.longest_run is None and s.fastest_run is None
+    assert summarize([]).longest_run is None

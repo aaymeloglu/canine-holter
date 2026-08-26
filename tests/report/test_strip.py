@@ -35,3 +35,16 @@ def test_draw_strip_clamps_near_start_without_wraparound():
     assert 1.0 in ydata
     assert -1.0 not in ydata
     plt.close(fig)
+
+
+def test_marks_wider_than_the_window_widen_the_strip_to_cover_them():
+    """An 18 s pause is longer than the 6 s window; the strip grows so both
+    edges of the gap are on the waveform, with a margin either side."""
+    samples = np.zeros(10000)
+    fig, ax = plt.subplots()
+    draw_strip(ax, samples, 100.0, center_time=50.0, mark_times=[41.0, 59.0])
+    t = ax.lines[0].get_xdata()
+    assert abs(t[-1] - t[0] - 20.0) < 0.05  # 18 s span + 1 s margin each side
+    xs = sorted(line.get_xdata()[0] for line in ax.lines[1:])
+    assert xs == [1.0, 19.0]
+    plt.close(fig)

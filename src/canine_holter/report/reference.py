@@ -10,6 +10,7 @@ arrhythmia are common and ~5 s is the usual line for concern.
 
 PVC_24H_NORMAL_MAX = 50
 PVC_24H_EQUIVOCAL_MAX = 300
+VT_MIN_BPM = 180  # the usual canine line between VT and accelerated idioventricular rhythm
 MIN_HOURS_FOR_24H_SCALING = 20  # PVC frequency varies across a day; don't scale a short clip
 _SEC_PER_DAY = 24 * 3600.0
 
@@ -45,6 +46,8 @@ def reference_lines(duration_sec: float) -> list[str]:
         f"  {PVC_24H_NORMAL_MAX}-{PVC_24H_EQUIVOCAL_MAX} is equivocal and a repeat Holter within the"
         f" year is advised; over {PVC_24H_EQUIVOCAL_MAX} is considered abnormal.",
         "- Couplets, triplets, or VT runs: any is worth a cardiologist's review, whatever the PVC count.",
+        f"- Run rate: runs faster than ~{VT_MIN_BPM} bpm are ventricular tachycardia; the same runs at a slower",
+        "  rate are an accelerated idioventricular rhythm, which is generally considered less concerning.",
         "- Pauses: pauses over 2.5 s are common in healthy dogs with sinus arrhythmia, especially at rest;",
         "  pauses over ~5 s, or any pause alongside fainting or collapse, warrant review.",
         "- Source: ESVC Doberman DCM screening guidelines (Wess et al., J Vet Cardiol 2017).",

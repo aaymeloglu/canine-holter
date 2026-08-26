@@ -41,6 +41,7 @@ def select_evenly(items: list[T], max_n: int) -> list[T]:
     return [items[round(i * step)] for i in range(max_n)]
 
 
+EXTREMES_TITLE = "Heart-rate extremes, longest pause, fastest run"
 EVENTS_TITLE = "Flagged events (couplets, triplets, VT runs)"
 ISOLATED_TITLE = "Isolated PVCs"
 
