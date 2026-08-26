@@ -66,10 +66,10 @@ rule fires:
 Then: bridge gaps of `BRIDGE_SEC = 30` s or less between excluded windows
 (the off-body tail has quiet stretches that are not ECG either), pad each
 span by `PAD_SEC = 2` s on both sides (edge beats are half-buried in
-noise), clip to the recording. The remainder after the last full window is
-judged as a window of its own, so the end of the recording is never
-silently analyzed. A median peak-to-peak of zero means no window has a
-signal at all: the whole recording is excluded (fail closed).
+noise), clip to the recording. The remainder after the last full window
+needs no rule of its own: the last-minute edge span always covers it. A
+median peak-to-peak of zero means no window has a signal at all: the whole
+recording is excluded (fail closed).
 
 Ratios are relative to the recording's own median because DR200 samples
 carry a decoder DC offset (the delta stream accumulates from zero) and
