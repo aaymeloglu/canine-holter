@@ -181,7 +181,7 @@ def _ectopy_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> Su
 def _pause_group(summary: ArrhythmiaSummary) -> SummaryGroup:
     longest = summary.longest_pause_sec
     return SummaryGroup("Pauses", [
-        SummaryRow(f"Pauses >= {PAUSE_THRESHOLD_SEC:g} s", str(len(summary.pauses))),
+        SummaryRow("Pauses", str(len(summary.pauses)), f">= {PAUSE_THRESHOLD_SEC:g} s"),
         SummaryRow(
             "Longest", f"{longest:.2f} s" if longest is not None else "n/a", PAUSE_BAND, pause_status(longest)
         ),

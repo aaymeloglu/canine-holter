@@ -36,7 +36,7 @@ REFERENCE_COLOR = "#6f6e6b"
 _PANEL_X = (_LEFT, 0.53)  # left edge of each panel column
 _PANEL_W = 0.42
 _VALUE_DX = 0.12  # value column offset inside a panel
-_PANEL_TOP = (0.80, 0.60)  # top of each panel row
+_PANEL_TOP = (0.86, 0.68)  # top of each panel row
 
 
 def _text_block(fig: Figure, y: float, lines: list[str], **kw) -> float:
@@ -88,7 +88,7 @@ def _draw_table(fig: Figure, header: list[str], rows: list[list[str]], top: floa
     table = ax.table(
         cellText=rows,
         colLabels=header,
-        colWidths=[0.16] + [0.105] * (len(header) - 1),
+        colWidths=[0.14, 0.11] + [0.75 / (len(header) - 2)] * (len(header) - 2),
         cellLoc="center",
         loc="upper center",
     )
