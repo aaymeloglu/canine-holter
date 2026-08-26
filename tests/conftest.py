@@ -16,6 +16,7 @@ def report_text(monkeypatch):
             content.summary_lines
             + content.reference_lines
             + [line for s in content.sections for line in [s.heading, *s.labels]]
+            + [" | ".join(row) for row in [content.hourly_header, *content.hourly_rows]]
         )
         return real(out_path, content=content, **kw)
 

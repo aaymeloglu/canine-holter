@@ -2,13 +2,14 @@
 writes it as report.pdf - the only output file."""
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import (
     HR_EXTREME_WINDOW_BEATS,
     MIN_RUN_BEATS,
     ArrhythmiaSummary,
+    HourRow,
     RunStats,
     pvc_runs,
 )
@@ -44,6 +45,39 @@ class ReportContent:
     summary_lines: list[str]
     reference_lines: list[str]
     sections: list[StripSection]
+    hourly_header: list[str]
+    hourly_rows: list[list[str]]  # one row of cells per HourRow, in HOURLY_HEADER order
+
+
+HOURLY_HEADER = ["Hour", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets", f"Runs ({MIN_RUN_BEATS}+)", "Pauses"]
+
+
+def _hour_label(row: HourRow, start_time: datetime | None) -> str:
+    """'15:33-16:33' with a known start, else elapsed 'h:mm-h:mm'."""
+    def clock(sec: float) -> str:
+        if start_time is not None:
+            return (start_time + timedelta(seconds=sec)).strftime("%H:%M")
+        return f"{int(sec // 3600)}:{int(sec % 3600 // 60):02d}"
+    return f"{clock(row.start_sec)}-{clock(row.end_sec)}"
+
+
+def _hourly_rows(summary: ArrhythmiaSummary, start_time: datetime | None) -> list[list[str]]:
+    def bpm(value: float | None) -> str:
+        return "-" if value is None else f"{value:.0f}"
+    return [
+        [
+            _hour_label(row, start_time),
+            str(row.beats),
+            bpm(row.min_bpm),
+            bpm(row.mean_bpm),
+            bpm(row.max_bpm),
+            str(row.pvcs),
+            str(row.couplets),
+            str(row.runs),
+            str(row.pauses),
+        ]
+        for row in summary.hourly
+    ]
 
 
 def _heart_rate_lines(summary: ArrhythmiaSummary, start_time: datetime | None) -> list[str]:
@@ -160,6 +194,8 @@ def build_content(beats: list[Beat], summary: ArrhythmiaSummary, start_time: dat
         summary_lines=_summary_lines(summary, start_time, duration_sec),
         reference_lines=reference_lines(duration_sec),
         sections=[s for s in sections if s is not None],
+        hourly_header=HOURLY_HEADER,
+        hourly_rows=_hourly_rows(summary, start_time),
     )
 
 

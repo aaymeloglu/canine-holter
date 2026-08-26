@@ -1,6 +1,8 @@
 """Renders ReportContent as the PDF: summary and reference ranges on page
-1, the timeline on page 2, then rhythm strips per section on the pages after
-(or, with no waveform, one text page per section)."""
+1, the timeline with the hourly table on page 2 (the table continues on
+pages of its own for recordings longer than a day), then rhythm strips per
+section on the pages after (or, with no waveform, one text page per
+section)."""
 from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -22,6 +24,9 @@ if TYPE_CHECKING:  # generate imports pdf; only the type is needed here
 
 PAGE_SIZE_IN = (8.5, 11)  # US Letter, portrait
 STRIPS_PER_PAGE = 3
+TABLE_ROWS_ON_TIMELINE_PAGE = 26  # a full day plus its partial hour fits under the timeline
+TABLE_ROWS_PER_PAGE = 40
+_TABLE_HEADING = "Hourly summary"
 _LEFT = 0.09
 _LINE_STEP = 0.021  # fraction of page height per text line at 10 pt
 
@@ -51,11 +56,42 @@ def _summary_page(summary_lines: list[str], reference_lines: list[str]) -> Figur
     return fig
 
 
-def _timeline_page(beats: list[Beat], summary: ArrhythmiaSummary, start_time: datetime | None) -> Figure:
+def _draw_table(fig: Figure, header: list[str], rows: list[list[str]], top: float) -> None:
+    """The hourly table, headed, growing downward from top (figure fraction)."""
+    fig.text(_LEFT, top, _TABLE_HEADING, va="top", fontsize=12, fontweight="bold")
+    ax = fig.add_axes((_LEFT, 0.04, 0.97 - _LEFT, top - 0.07))
+    ax.axis("off")
+    table = ax.table(
+        cellText=rows,
+        colLabels=header,
+        colWidths=[0.16] + [0.105] * (len(header) - 1),
+        cellLoc="center",
+        loc="upper center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(1, 1.25)
+
+
+def _timeline_page(
+    beats: list[Beat],
+    summary: ArrhythmiaSummary,
+    start_time: datetime | None,
+    header: list[str],
+    rows: list[list[str]],
+) -> Figure:
     fig = plt.figure(figsize=PAGE_SIZE_IN)
     fig.text(_LEFT, 0.95, "Heart-rate timeline and events", va="top", fontsize=12, fontweight="bold")
-    gs = GridSpec(1, 1, figure=fig, top=0.90, bottom=0.55, left=_LEFT, right=0.97)
+    gs = GridSpec(1, 1, figure=fig, top=0.90, bottom=0.66, left=_LEFT, right=0.97)
     draw_timeline(fig, gs[0], beats, summary, start_time)
+    if rows:
+        _draw_table(fig, header, rows, top=0.58)
+    return fig
+
+
+def _table_page(header: list[str], rows: list[list[str]]) -> Figure:
+    fig = plt.figure(figsize=PAGE_SIZE_IN)
+    _draw_table(fig, header, rows, top=0.95)
     return fig
 
 
@@ -110,11 +146,18 @@ def write_pdf(
 ) -> None:
     """Write the multi-page PDF report. With no waveform samples each
     section's events are listed as text on a page of their own."""
+    header, rows = content.hourly_header, content.hourly_rows
+    first, rest = rows[:TABLE_ROWS_ON_TIMELINE_PAGE], rows[TABLE_ROWS_ON_TIMELINE_PAGE:]
     with PdfPages(out_path) as pdf:
-        for fig in (
+        pages = [
             _summary_page(content.summary_lines, content.reference_lines),
-            _timeline_page(beats, summary, start_time),
-        ):
+            _timeline_page(beats, summary, start_time, header, first),
+        ]
+        pages += [
+            _table_page(header, rest[i : i + TABLE_ROWS_PER_PAGE])
+            for i in range(0, len(rest), TABLE_ROWS_PER_PAGE)
+        ]
+        for fig in pages:
             pdf.savefig(fig)
             plt.close(fig)
         for section in content.sections:

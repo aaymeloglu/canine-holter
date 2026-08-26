@@ -101,3 +101,30 @@ def test_isolated_pvcs_get_their_own_strip_pages():
 
 def test_isolated_pvcs_are_listed_on_a_text_page_without_samples():
     assert _write_isolated(4, samples=False) == _BASE_PAGES + 1
+
+
+def _write_hours(hours):
+    """A recording of the given length at 60 bpm, no events; return its page count."""
+    n = int(hours * 3600) + 1
+    beats = [_beat(float(i), 1.0 if i else None, "N") for i in range(n)]
+    summary = summarize(beats)
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "report.pdf")
+        write_pdf(
+            out,
+            content=build_content(beats, summary, None),
+            beats=beats,
+            summary=summary,
+            start_time=None,
+            samples=np.zeros(n * 10),
+            sample_rate=10.0,
+        )
+        return _page_count(out)
+
+
+def test_hourly_table_shares_the_timeline_page_for_a_day_long_recording():
+    assert _write_hours(24.5) == _BASE_PAGES  # 25 rows fit under the timeline
+
+
+def test_hourly_table_spills_to_its_own_page_past_the_first_page_rows():
+    assert _write_hours(26.5) == _BASE_PAGES + 1  # 27 rows: 26 under the timeline, 1 on a new page
