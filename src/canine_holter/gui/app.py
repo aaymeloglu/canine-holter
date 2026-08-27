@@ -28,6 +28,8 @@ def analyze_and_report(input_path: str, out_dir: str) -> AnalysisResult:
 def _open_in_default_app(path: str) -> None:
     if sys.platform == "darwin":
         subprocess.run(["open", path], check=False)
+    elif sys.platform == "win32":
+        os.startfile(path)  # the user's own report, in their default PDF viewer
     else:
         subprocess.run(["xdg-open", path], check=False)
 

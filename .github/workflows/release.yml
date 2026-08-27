@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual runs build both installers (as artifacts) without creating a
+  # release, so a packaging change can be verified before a tag.
+  workflow_dispatch:
 
 # Required so the default GITHUB_TOKEN can create a release asset via
 # `gh release create`. GitHub's default for GITHUB_TOKEN is read-only
@@ -116,7 +119,70 @@ jobs:
           security delete-keychain "$KEYCHAIN_PATH" || true
           rm -f "$RUNNER_TEMP/certificate.p12" || true
 
-      - name: Upload to GitHub Release
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/canine-holter.dmg
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # setup-python's Windows builds ship a working tkinter (the Tk trouble
+      # in the macOS job is a macOS-only problem).
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify tkinter is importable
+        run: python -c "import tkinter; tkinter.Tcl(); print('tkinter OK:', tkinter.TkVersion)"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Build with PyInstaller
+        run: python -m PyInstaller canine-holter.spec
+
+      # The build is not code-signed (that needs a certificate or Azure
+      # Trusted Signing); SmartScreen warns on first run and the README says
+      # what to click.
+      - name: Zip the onedir build
+        run: Compress-Archive -Path dist\canine-holter\* -DestinationPath dist\canine-holter-windows.zip
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/canine-holter-windows.zip
+          if-no-files-found: error
+
+  release:
+    needs: [build-macos, build-windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create the GitHub release with both downloads
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/canine-holter.dmg --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            artifacts/macos/canine-holter.dmg \
+            artifacts/windows/canine-holter-windows.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes "**Downloads:** \`canine-holter.dmg\` for macOS (signed and notarized); \`canine-holter-windows.zip\` for Windows - unzip and run \`canine-holter.exe\`. The Windows build is not code-signed, so SmartScreen warns the first time: click *More info*, then *Run anyway*."

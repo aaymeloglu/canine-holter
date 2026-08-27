@@ -116,3 +116,15 @@ def test_run_without_both_choices_is_a_no_op(monkeypatch):
     monkeypatch.setattr(gui_app, "analyze_and_report", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("must not run")))
     before = AppState(recording_path="/r/119.hea")
     assert run(before) == before
+
+
+def test_open_in_default_app_uses_startfile_on_windows(monkeypatch):
+    import sys
+    from canine_holter.gui import app as gui
+
+    opened = []
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(gui.os, "startfile", lambda p: opened.append(p), raising=False)
+    monkeypatch.setattr(gui.subprocess, "run", lambda *a, **k: opened.append(("subprocess", a)))
+    gui._open_in_default_app("C:\\reports\\report.pdf")
+    assert opened == ["C:\\reports\\report.pdf"]

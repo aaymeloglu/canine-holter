@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
 from importlib.metadata import version as _pkg_version
 
 
@@ -33,6 +34,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    # Windows takes the icon on the executable; macOS takes it on the BUNDLE below.
+    icon='assets/icon.ico' if sys.platform == 'win32' else None,
 )
 coll = COLLECT(
     exe,
