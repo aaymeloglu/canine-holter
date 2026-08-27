@@ -95,7 +95,7 @@ Walk peaks A, B, C with a running RR history of accepted intervals:
 - `local` = median of the last `LOCAL_RR_BEATS` accepted RRs; act only if
   `local > SLOW_RR_SEC = 0.8`.
 - Drop B if `(B - A) < T_WAVE_MAX_COUPLING_SEC = 0.45` **and**
-  `|(C - A) - local| < T_WAVE_RHYTHM_TOLERANCE * local`, tolerance 0.3:
+  `|(C - A) - local| < T_WAVE_RHYTHM_TOLERANCE * local`, tolerance 0.25 (0.3 at most; sinus arrhythmia at rest varies RR by about that much):
   removing B leaves the rhythm undisturbed, which a T wave does and a PVC
   does not (a PVC that early either resets the sinus rhythm or is followed
   by a compensatory pause, so A -> C is far from one local RR).
