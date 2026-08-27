@@ -1,4 +1,4 @@
-"""Text and flagged-event helpers shared by the markdown and PDF reports."""
+"""Text and flagged-event helpers shared by report generation and rendering."""
 from datetime import datetime, timedelta
 from typing import TypeVar
 from canine_holter.arrhythmia.burden import pvc_runs

@@ -27,7 +27,13 @@ from canine_holter.report.timeline import draw_timeline
 from canine_holter.types import Beat
 
 if TYPE_CHECKING:  # generate imports pdf; only the types are needed here
-    from canine_holter.report.generate import ReportContent, StripCaption, StripSection, SummaryGroup
+    from canine_holter.report.generate import (
+        ReportContent,
+        StripCaption,
+        StripItem,
+        StripSection,
+        SummaryGroup,
+    )
 
 PAGE_SIZE_IN = (8.5, 11)  # US Letter, portrait
 _PAGE_MM = (215.9, 279.4)
@@ -158,9 +164,7 @@ def _significance_lines(caption: StripCaption) -> list[str]:
 
 def _strip_page(
     heading: str,
-    runs: list[list[Beat]],
-    captions: list[StripCaption],
-    pauses: list[tuple[float, float] | None],
+    items: list[StripItem],
     channels: np.ndarray,
     channel_names: tuple[str, ...],
     sample_rate: float,
@@ -170,7 +174,8 @@ def _strip_page(
     significance) above its stacked leads drawn at true scale."""
     fig = plt.figure(figsize=PAGE_SIZE_IN)
     fig.text(_LEFT, 0.95, heading, va="top", fontsize=12, fontweight="bold")
-    for slot, (run, caption, pause) in enumerate(zip(runs, captions, pauses)):
+    for slot, item in enumerate(items):
+        run, caption, pause = item.run, item.caption, item.pause
         y = 0.90 - slot * _STRIP_SLOT
         fig.text(_LEFT, y, caption.title, va="top", fontsize=10, fontweight="bold")
         y -= 0.024
@@ -201,12 +206,13 @@ def _strip_page(
     return fig
 
 
-def _text_page(heading: str, captions: list[StripCaption]) -> Figure:
+def _text_page(heading: str, items: list[StripItem]) -> Figure:
     """The no-waveform fallback: every caption as text."""
     fig = plt.figure(figsize=PAGE_SIZE_IN)
     fig.text(_LEFT, 0.95, heading, va="top", fontsize=12, fontweight="bold")
     y = 0.91
-    for caption in captions:
+    for item in items:
+        caption = item.caption
         fig.text(_LEFT, y, caption.title, va="top", fontsize=10, fontweight="bold")
         y -= _LINE_STEP
         y = _text_block(fig, y, _caption_lines(caption) + _significance_lines(caption), fontsize=9)
@@ -216,16 +222,19 @@ def _text_page(heading: str, captions: list[StripCaption]) -> Figure:
 
 def _write_section(pdf, section: StripSection, channels, channel_names, sample_rate, beats) -> None:
     if channels is None or sample_rate is None:
-        fig = _text_page(section.heading, section.captions)
+        fig = _text_page(section.heading, section.items)
         pdf.savefig(fig)
         plt.close(fig)
         return
-    pauses = section.pauses or [None] * len(section.runs)
-    for start in range(0, len(section.runs), STRIPS_PER_PAGE):
+    for start in range(0, len(section.items), STRIPS_PER_PAGE):
         stop = start + STRIPS_PER_PAGE
         fig = _strip_page(
-            section.heading, section.runs[start:stop], section.captions[start:stop], pauses[start:stop],
-            channels, channel_names, sample_rate, beats,
+            section.heading,
+            section.items[start:stop],
+            channels,
+            channel_names,
+            sample_rate,
+            beats,
         )
         pdf.savefig(fig)
         plt.close(fig)

@@ -1,5 +1,9 @@
-from canine_holter.types import Recording, Beat
+from dataclasses import FrozenInstanceError, replace
+
 import numpy as np
+import pytest
+
+from canine_holter.types import Beat, Recording
 
 
 def test_recording_holds_signal_and_metadata():
@@ -10,18 +14,13 @@ def test_recording_holds_signal_and_metadata():
     assert rec.source == "test"
 
 
-def test_beat_defaults_label_to_none():
-    beat = Beat(time=1.5, rr_interval=0.8, qrs_duration=0.09, label=None)
-    assert beat.label is None
-    assert beat.time == 1.5
-
-
 def test_beat_is_immutable_and_replaceable():
-    from dataclasses import replace
     beat = Beat(time=1.5, rr_interval=0.8, qrs_duration=0.09, label=None)
     labeled = replace(beat, label="V")
     assert labeled.label == "V"
-    assert beat.label is None  # original unchanged
+    assert beat.label is None
+    with pytest.raises(FrozenInstanceError):
+        beat.label = "N"
 
 
 def test_recording_equality_does_not_raise_on_array_field():
@@ -49,13 +48,11 @@ def test_recording_accepts_channels_matching_samples_and_names():
 
 
 def test_recording_rejects_channels_of_a_different_length():
-    import pytest
     with pytest.raises(ValueError, match="length"):
         _rec(channels=np.zeros((2, 4)), channel_names=("A", "B"))
 
 
 def test_recording_rejects_non_2d_channels_and_name_count_mismatch():
-    import pytest
     with pytest.raises(ValueError, match="2-D"):
         _rec(channels=np.zeros(3), channel_names=("A",))
     with pytest.raises(ValueError, match="channel_names"):

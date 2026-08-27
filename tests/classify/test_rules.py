@@ -6,10 +6,15 @@ def _beat(time, rr, qrs):
     return Beat(time=time, rr_interval=rr, qrs_duration=qrs, label=None)
 
 
-def test_first_beats_are_undetermined_until_baseline_established():
+def test_beat_with_missing_rr_is_undetermined():
     beats = [_beat(0.0, None, 0.08)]
     labeled = classify_beats(beats)
     assert labeled[0].label == "U"
+
+
+def test_first_complete_beat_seeds_the_baseline_as_normal():
+    labeled = classify_beats([_beat(0.8, 0.8, 0.08)])
+    assert labeled[0].label == "N"
 
 
 def test_normal_regular_beats_are_labeled_normal():

@@ -2,7 +2,10 @@
 import os
 import sys
 import tempfile
+
 import pytest
+
+from canine_holter import cli
 from canine_holter.cli import main
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -22,16 +25,34 @@ def test_main_runs_end_to_end_and_prints_report_path(monkeypatch, capsys):
         assert captured.out.strip() == f"Report written to {report_path}"
 
 
-def test_main_accepts_each_dog_weight_class_choice(monkeypatch, capsys):
-    for weight_class in ("small", "medium", "large"):
-        with tempfile.TemporaryDirectory() as out_dir:
-            monkeypatch.setattr(
-                sys,
-                "argv",
-                ["canine-holter", INPUT_PATH, "--out", out_dir, "--dog-weight-class", weight_class],
-            )
-            main()
-            assert os.path.exists(os.path.join(out_dir, "report.pdf"))
+@pytest.mark.parametrize("weight_class", ["small", "medium", "large"])
+def test_main_passes_each_dog_weight_class_to_the_pipeline(monkeypatch, capsys, weight_class):
+    captured = {}
+
+    def fake_run_analysis(input_path, out_dir, dog_weight_class, start_time):
+        captured.update(
+            input_path=input_path,
+            out_dir=out_dir,
+            dog_weight_class=dog_weight_class,
+            start_time=start_time,
+        )
+        return os.path.join(out_dir, "report.pdf")
+
+    monkeypatch.setattr(cli, "run_analysis", fake_run_analysis)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["canine-holter", INPUT_PATH, "--out", "/out", "--dog-weight-class", weight_class],
+    )
+    main()
+
+    assert captured == {
+        "input_path": INPUT_PATH,
+        "out_dir": "/out",
+        "dog_weight_class": weight_class,
+        "start_time": None,
+    }
+    assert capsys.readouterr().out.strip() == "Report written to /out/report.pdf"
 
 
 def test_main_rejects_invalid_dog_weight_class(monkeypatch, capsys):
