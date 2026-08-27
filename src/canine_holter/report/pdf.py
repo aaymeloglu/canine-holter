@@ -150,6 +150,10 @@ def _caption_lines(caption: StripCaption) -> list[str]:
     return textwrap.wrap(caption.what, _CAPTION_WRAP)
 
 
+def _significance_lines(caption: StripCaption) -> list[str]:
+    return textwrap.wrap("\u25cf " + caption.significance, _CAPTION_WRAP)
+
+
 def _strip_page(
     heading: str,
     runs: list[list[Beat]],
@@ -172,12 +176,14 @@ def _strip_page(
         for line in what:
             fig.text(_LEFT, y, line, va="top", fontsize=8.5)
             y -= _CAPTION_STEP
-        fig.text(
-            _LEFT, y, "● " + caption.significance, va="top", fontsize=8.5,
-            color=STATUS_COLORS.get(caption.status or "", "black"),
-            fontweight="bold" if caption.status else "normal",
-        )
-        y -= _CAPTION_STEP + 0.04  # room for the beat-label and RR rows above the top lead
+        for line in _significance_lines(caption):
+            fig.text(
+                _LEFT, y, line, va="top", fontsize=8.5,
+                color=STATUS_COLORS.get(caption.status or "", "black"),
+                fontweight="bold" if caption.status else "normal",
+            )
+            y -= _CAPTION_STEP
+        y -= 0.04  # room for the beat-label and RR rows above the top lead
         height = _CHANNEL_H * channels.shape[0]
         gs = GridSpec(1, 1, figure=fig, left=_STRIP_LEFT, right=_STRIP_LEFT + _STRIP_W, top=y, bottom=y - height)
         axes = draw_strip(
@@ -201,7 +207,7 @@ def _text_page(heading: str, captions: list[StripCaption]) -> Figure:
     for caption in captions:
         fig.text(_LEFT, y, caption.title, va="top", fontsize=10, fontweight="bold")
         y -= _LINE_STEP
-        y = _text_block(fig, y, _caption_lines(caption) + [caption.significance], fontsize=9)
+        y = _text_block(fig, y, _caption_lines(caption) + _significance_lines(caption), fontsize=9)
         y -= 0.01
     return fig
 

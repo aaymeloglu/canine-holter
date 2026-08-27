@@ -26,7 +26,6 @@ from canine_holter.report.common import (
     format_time,
     isolated_pvcs,
     pvc_line,
-    run_center_time,
     section_heading,
     select_evenly,
     short_time,
@@ -172,8 +171,7 @@ def _pvc_24h_row(summary: ArrhythmiaSummary) -> SummaryRow:
     scaled = pvc_per_24h(summary.pvc_count, summary.analyzed_sec)
     if scaled is None:
         return SummaryRow("PVCs per 24 h", "n/a", f"needs >= {MIN_HOURS_FOR_24H_SCALING} h analyzed")
-    value = f"{round(scaled)} (scaled from {format_duration(summary.analyzed_sec)} analyzed)"
-    return SummaryRow("PVCs per 24 h", value, PVC_24H_BAND, pvc_24h_status(scaled))
+    return SummaryRow("PVCs per 24 h", str(round(scaled)), PVC_24H_BAND, pvc_24h_status(scaled))
 
 
 def _ectopy_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> SummaryGroup:
@@ -248,7 +246,7 @@ def _pvc_caption(index: int, run: list[Beat], beats: list[Beat], start_time: dat
     first_index = next(i for i, b in enumerate(beats) if b.time == run[0].time)
     typical_rr, typical_qrs = _typical(beats, first_index)
     n = len(run)
-    when = short_time(run_center_time(run), start_time)
+    when = short_time(run[0].time, start_time)  # the first beat, as RunStats.start_time on page 1
     if n == 1:
         beat = run[0]
         what = (

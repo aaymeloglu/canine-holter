@@ -205,7 +205,7 @@ def test_ectopy_group_scales_pvcs_by_analyzed_time_and_colors_the_band():
     q = SignalQuality(24 * 3600.0, ((0.0, 4 * 3600.0),))  # 20 h analyzed
     rows = _rows(build_content(beats, summarize(beats, quality=q), None), "Ventricular ectopy")
     assert rows["PVCs per 24 h"].reference == "<50 | 50-300 | >300"
-    assert rows["PVCs per 24 h"].value == "2074 (scaled from 20h 0m analyzed)"
+    assert rows["PVCs per 24 h"].value == "2074"
     assert rows["PVCs per 24 h"].status == "alert"
 
 
@@ -279,6 +279,18 @@ def test_couplet_caption_names_both_beats_and_is_an_alert():
     assert caption.what.startswith("The marked beats arrived 0.50 s and 0.25 s after the beat before them (typical here 0.50 s)")
     assert caption.significance == "Any couplet is worth a cardiologist's review, whatever the PVC count."
     assert caption.status == "alert"
+
+
+def test_run_captions_are_timed_at_the_first_beat_like_the_summary_row():
+    # A run's clock time must match page 1 (RunStats.start_time) wherever it
+    # is shown; the run here straddles a second boundary so the centre reads
+    # one second later than the first beat.
+    beats = _with_run(_steady(100, 0.5), 50, 4, 0.4)  # V beats at 25.0-26.2 s
+    start = datetime(2026, 8, 23, 15, 33, 8, 500000)
+    content = build_content(beats, summarize(beats), start)
+    assert _rows(content, "Ventricular ectopy")["Fastest run"].value == "4 beats, 150 bpm, 15:33:33"
+    assert _captions(content, EXTREMES_TITLE)[-1].title == "Fastest run · 15:33:33"
+    assert _captions(content, EVENTS_TITLE)[0].title == "Event 1 · 15:33:33"
 
 
 def test_run_caption_status_follows_the_vt_rate_line():

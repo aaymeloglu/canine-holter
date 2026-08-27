@@ -147,3 +147,15 @@ def test_summary_page_renders_groups_with_status_colors_and_footer():
     assert texts["1"].get_color() == STATUS_COLORS["alert"]  # the couplet count
     assert any("not a diagnosis" in t for t in texts)
     plt.close(fig)
+
+
+def test_significance_line_wraps_instead_of_running_off_the_page():
+    from canine_holter.report.generate import StripCaption
+    from canine_holter.report.pdf import _CAPTION_WRAP, _significance_lines
+    long = "4 PVCs in a row at 150 bpm: an accelerated idioventricular rhythm, generally less concerning than ventricular tachycardia."
+    lines = _significance_lines(StripCaption("t", "w", long, "caution"))
+    assert len(lines) == 2
+    assert lines[0].startswith("\u25cf ")
+    assert all(len(line) <= _CAPTION_WRAP for line in lines)
+    assert " ".join(lines) == "\u25cf " + long
+    assert _significance_lines(StripCaption("t", "w", "short", None)) == ["\u25cf short"]
