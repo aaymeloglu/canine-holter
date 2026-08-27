@@ -40,33 +40,36 @@ def _write(n_runs, samples=True):
             beats=beats,
             summary=summary,
             start_time=start,
-            samples=sig,
+            channels=sig[None, :] if samples else None,
+            channel_names=("ECG",) if samples else (),
             sample_rate=100.0 if samples else None,
         )
         return _page_count(out), os.path.getsize(out)
 
 
-# Every report has a summary page, a timeline page, and an extremes strip
-# page (fastest/slowest heart rate); event sections add pages after those.
-_BASE_PAGES = 3
+# Every report with a waveform has a summary page, a timeline page, the
+# strip primer, and an extremes strip page (fastest/slowest heart rate);
+# event sections add pages after those, two strips per page.
+_BASE_PAGES = 4
+_BASE_PAGES_TEXT = 3  # no waveform: no primer, and the extremes are one text page
 
 
-def test_no_flagged_events_is_summary_timeline_and_extremes():
+def test_no_flagged_events_is_summary_timeline_primer_and_extremes():
     pages, size = _write(0)
     assert pages == _BASE_PAGES
     assert size > 1000
 
 
-def test_three_events_fit_on_one_strip_page():
-    assert _write(3)[0] == _BASE_PAGES + 1
+def test_two_events_fit_on_one_strip_page():
+    assert _write(2)[0] == _BASE_PAGES + 1
 
 
-def test_four_events_spill_to_a_second_strip_page():
-    assert _write(4)[0] == _BASE_PAGES + 2
+def test_three_events_spill_to_a_second_strip_page():
+    assert _write(3)[0] == _BASE_PAGES + 2
 
 
-def test_no_samples_lists_events_on_a_text_page_instead_of_strips():
-    assert _write(3, samples=False)[0] == _BASE_PAGES + 1
+def test_no_samples_lists_events_on_a_text_page_without_a_primer():
+    assert _write(3, samples=False)[0] == _BASE_PAGES_TEXT + 1
 
 
 def _beats_with_isolated_pvcs(n):
@@ -89,18 +92,19 @@ def _write_isolated(n, samples=True):
             beats=beats,
             summary=summary,
             start_time=None,
-            samples=sig,
+            channels=sig[None, :] if samples else None,
+            channel_names=("ECG",) if samples else (),
             sample_rate=100.0 if samples else None,
         )
         return _page_count(out)
 
 
 def test_isolated_pvcs_get_their_own_strip_pages():
-    assert _write_isolated(4) == _BASE_PAGES + 2  # two strip pages (3 + 1)
+    assert _write_isolated(4) == _BASE_PAGES + 2  # two strip pages (2 + 2)
 
 
 def test_isolated_pvcs_are_listed_on_a_text_page_without_samples():
-    assert _write_isolated(4, samples=False) == _BASE_PAGES + 1
+    assert _write_isolated(4, samples=False) == _BASE_PAGES_TEXT + 1
 
 
 def _write_hours(hours):
@@ -116,7 +120,8 @@ def _write_hours(hours):
             beats=beats,
             summary=summary,
             start_time=None,
-            samples=np.zeros(n * 10),
+            channels=np.zeros((1, n * 10)),
+            channel_names=("ECG",),
             sample_rate=10.0,
         )
         return _page_count(out)

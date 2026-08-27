@@ -245,3 +245,74 @@ def test_hourly_header_and_rows_carry_analyzed_minutes():
     content = build_content(beats, summarize(beats, quality=q), None)
     assert content.hourly_header[:2] == ["Hour", "Analyzed (min)"]
     assert [row[1] for row in content.hourly_rows] == ["59.0", "5.7"]
+
+
+# --- strip captions -----------------------------------------------------------
+def _captions(content, heading):
+    return next(s for s in content.sections if s.heading == heading).captions
+
+
+def test_every_section_has_one_caption_per_run():
+    beats = _with_run(_with_run(_steady(100, 0.5), 10, 5, 0.3), 50, 2, 0.25)
+    beats = _with_run(beats, 80, 1, 0.3)
+    content = build_content(beats, summarize(beats), None)
+    assert all(len(s.captions) == len(s.runs) for s in content.sections)
+
+
+def test_isolated_pvc_caption_quotes_the_measurements_behind_the_label():
+    beats = _steady(20, 0.8)
+    beats[10] = _beat(8.0, 0.4, "V", qrs=0.12)
+    caption = _captions(build_content(beats, summarize(beats), None), ISOLATED_TITLE)[0]
+    assert caption.title == "Isolated PVC 1 · t=8s"
+    assert caption.what == (
+        "The marked beat arrived 0.40 s after the beat before it (typical here 0.80 s) and its QRS"
+        " lasts 0.12 s (typical 0.08 s): early and wide is what makes it a PVC."
+    )
+    assert "common in healthy dogs" in caption.significance
+    assert caption.status is None
+
+
+def test_couplet_caption_names_both_beats_and_is_an_alert():
+    beats = _with_run(_steady(100, 0.5), 50, 2, 0.25)
+    caption = _captions(build_content(beats, summarize(beats), datetime(2026, 8, 23, 15, 33, 8)), EVENTS_TITLE)[0]
+    assert caption.title.startswith("Event 1 · 15:33:")
+    assert caption.what.startswith("The marked beats arrived 0.50 s and 0.25 s after the beat before them (typical here 0.50 s)")
+    assert caption.significance == "Any couplet is worth a cardiologist's review, whatever the PVC count."
+    assert caption.status == "alert"
+
+
+def test_run_caption_status_follows_the_vt_rate_line():
+    fast = _with_run(_steady(100, 0.5), 10, 4, 60 / 180)
+    slow = _with_run(_steady(100, 0.5), 10, 4, 60 / 179)
+    fast_caption = _captions(build_content(fast, summarize(fast), None), EVENTS_TITLE)[0]
+    slow_caption = _captions(build_content(slow, summarize(slow), None), EVENTS_TITLE)[0]
+    assert fast_caption.significance == "4 PVCs in a row at 180 bpm is ventricular tachycardia."
+    assert fast_caption.status == "alert"
+    assert slow_caption.significance.startswith("4 PVCs in a row at 179 bpm: an accelerated idioventricular rhythm")
+    assert slow_caption.status == "caution"
+
+
+def _with_pause(gap):
+    beats = _steady(40, 0.5)
+    t = beats[-1].time
+    return beats + [_beat(t + gap, gap, "N")] + [_beat(t + gap + k * 0.5, 0.5, "N") for k in range(1, 10)]
+
+
+def test_pause_caption_status_and_text_follow_the_pause_band():
+    for gap, status in ((2.5, "caution"), (5.0, "caution"), (5.01, "alert")):
+        beats = _with_pause(gap)
+        captions = _captions(build_content(beats, summarize(beats), None), EXTREMES_TITLE)
+        pause = next(c for c in captions if c.title.startswith("Longest pause"))
+        assert pause.what == f"No beat for {gap:.2f} s."
+        assert pause.status == status, gap
+    assert "worth a cardiologist's review" in pause.significance
+
+
+def test_heart_rate_extreme_captions_are_uncoloured_and_explain_context():
+    beats = _steady(20, 0.5)
+    captions = _captions(build_content(beats, summarize(beats), None), EXTREMES_TITLE)
+    assert captions[0].title.startswith("Fastest heart rate · t=")
+    assert captions[0].what == "120 bpm averaged over 5 beats."
+    assert "play or excitement" in captions[0].significance and captions[0].status is None
+    assert captions[1].title.startswith("Slowest heart rate · t=")
+    assert "sinus arrhythmia" in captions[1].significance and captions[1].status is None

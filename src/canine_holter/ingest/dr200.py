@@ -9,6 +9,7 @@ import numpy as np
 from canine_holter.types import Recording
 
 
+DR200_CHANNEL_NAMES = ("Ch 1", "Ch 2", "Ch 3")  # the DR200 and HE/LX call them channels, not leads
 DR200_SAMPLE_RATE = 180.0
 DR200_MILLIVOLTS_PER_COUNT = 0.0125
 DR200_PACEMAKER_MARKER = np.iinfo(np.int16).min
@@ -227,7 +228,8 @@ def load_native_flash(
     channel: int = 0,
     source: str | None = None,
 ) -> Recording:
-    """Load one ECG channel directly from an SD-card ``flash.dat`` recording.
+    """Load an SD-card ``flash.dat`` recording: all three ECG channels, with
+    ``channel`` selecting the analysis lead.
 
     DR200 SampleStorageFormat 1 stores 304 three-channel timepoints in every
     checksummed ECG block.  Each channel is encoded as a nonlinear four-bit
@@ -247,27 +249,30 @@ def load_native_flash(
 
     data_block_count, start_time = _inspect_native_flash(flash_path)
 
-    samples = np.empty(data_block_count * _SAMPLES_PER_BLOCK, dtype=np.float64)
+    counts_by_channel = np.empty((3, data_block_count * _SAMPLES_PER_BLOCK), dtype=np.float64)
     cursor = 0
-    previous_count = 0
+    previous_counts = np.zeros(3, dtype=np.int64)
     for _, block in _iter_active_blocks(flash_path):
         if block[4] != _DATA_BLOCK_TYPE or block[5] != 0:
             continue
 
         encoded, marker_rows = _decode_data_block(block)
-        deltas = _DELTA_COUNTS[encoded[:, channel]].astype(np.int64)
-        deltas[marker_rows] = 0
-        counts = previous_count + np.cumsum(deltas, dtype=np.int64)
-        previous_count = int(counts[-1])
-        counts[marker_rows] = DR200_PACEMAKER_MARKER
-        samples[cursor : cursor + _SAMPLES_PER_BLOCK] = counts
+        deltas = _DELTA_COUNTS[encoded].astype(np.int64)  # (timepoints, 3)
+        deltas[marker_rows, :] = 0
+        counts = previous_counts + np.cumsum(deltas, axis=0, dtype=np.int64)
+        previous_counts = counts[-1].copy()
+        counts[marker_rows, :] = DR200_PACEMAKER_MARKER
+        counts_by_channel[:, cursor : cursor + _SAMPLES_PER_BLOCK] = counts.T
         cursor += _SAMPLES_PER_BLOCK
 
-    reconstructed = _replace_pacemaker_markers(samples)
-    samples_mv = reconstructed * DR200_MILLIVOLTS_PER_COUNT
+    channels_mv = np.stack(
+        [_replace_pacemaker_markers(ch) * DR200_MILLIVOLTS_PER_COUNT for ch in counts_by_channel]
+    )
     return Recording(
-        samples=samples_mv,
+        samples=channels_mv[channel],
         sample_rate=DR200_SAMPLE_RATE,
         start_time=start_time,
         source=source if source is not None else str(flash_path),
+        channels=channels_mv,
+        channel_names=DR200_CHANNEL_NAMES,
     )

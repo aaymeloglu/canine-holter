@@ -72,4 +72,6 @@ def run_analysis(
         samples=rec.samples,
         sample_rate=rec.sample_rate,
         start_time=rec.start_time,
+        channels=rec.channels,
+        channel_names=rec.channel_names,
     )

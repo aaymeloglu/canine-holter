@@ -74,3 +74,29 @@ def short_time(elapsed_sec: float, start_time: datetime | None) -> str:
     if start_time is None:
         return f"t={elapsed_sec:.0f}s"
     return (start_time + timedelta(seconds=elapsed_sec)).strftime("%H:%M:%S")
+
+
+HOW_TO_READ_TITLE = "How to read the strips that follow"
+HOW_TO_READ_STRIPS = [
+    "Each strip is a few seconds of the dog's ECG drawn on standard ECG paper: 25 mm per second and",
+    "10 mm per millivolt unless the strip says otherwise. Every small square is 0.04 s; every large",
+    "square (5 small) is 0.2 s. Five large squares are one second.",
+    "",
+    "The three rows are the same heartbeats recorded from three angles (the recorder's three",
+    "channels). A beat that appears in all three rows is real; a spike in only one is usually",
+    "movement or a loose electrode.",
+    "",
+    "Above the top row every detected beat has a label: N for a normal beat, V for a beat the",
+    "software calls a PVC (premature ventricular complex), ? when it could not measure the beat.",
+    "The beats each strip is about are shaded red, and the time from the previous beat to the",
+    "shaded beat, and from it to the next, is printed in seconds.",
+    "",
+    "A PVC is a beat with a different shape from its neighbours (usually wider) that arrives early",
+    "and is usually followed by a longer gap. That is what to look for when checking a V label.",
+    "",
+    "Under each strip's title: what the strip shows, with the measurements behind the label, and",
+    "whether it matters, judged against the same published bands as page 1 (green / amber / red).",
+    "",
+    "The labels are the software's provisional calls, not a cardiologist's. The strips are here so",
+    "that a reader - or the cardiologist - can check them.",
+]
