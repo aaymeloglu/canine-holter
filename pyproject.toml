@@ -1,6 +1,6 @@
 [project]
 name = "canine-holter"
-version = "0.3.1"
+version = "0.4.0"
 description = "Holter monitor ECG interpretation for canine PVC/arrhythmia screening"
 requires-python = ">=3.11"
 dependencies = [
