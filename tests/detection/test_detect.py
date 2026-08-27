@@ -304,8 +304,8 @@ def test_drop_interpolated_t_waves_follows_sinus_arrhythmia_beat_to_beat():
     # RR lengthening 1.2 -> 1.5 -> 1.8: the T wave after the 1.5 s beat is
     # judged against its neighbours, not a running average.
     sr = 100.0
-    beats = [0.0, 1.2, 2.7, 4.5, 6.3]
-    with_t = sorted(beats + [2.7 + 0.35])
+    beats = [0.0, 1.2, 2.4, 3.6, 5.1, 6.9, 8.7]
+    with_t = sorted(beats + [5.1 + 0.35])
     assert drop_interpolated_t_waves(_peaks(sr, with_t), sr).tolist() == _peaks(sr, beats).tolist()
 
 
@@ -313,12 +313,60 @@ def test_drop_interpolated_t_waves_skips_the_next_beats_own_t_wave_when_looking_
     # Both beats carry a detected T wave; the second T must not hide the
     # sinus interval the first is compared with.
     sr = 100.0
-    beats = [0.0, 1.4, 2.8, 4.2]
-    with_t = sorted(beats + [1.4 + 0.35, 2.8 + 0.35])
+    beats = [0.0, 1.4, 2.8, 4.2, 5.6, 7.0, 8.4]
+    with_t = sorted(beats + [4.2 + 0.35, 5.6 + 0.35])
     assert drop_interpolated_t_waves(_peaks(sr, with_t), sr).tolist() == _peaks(sr, beats).tolist()
 
 
-def test_drop_interpolated_t_waves_keeps_a_candidate_with_no_reference_interval():
+def test_drop_interpolated_t_waves_needs_a_rhythm_history_first():
+    # Three accepted intervals before it can call the rhythm slow; until
+    # then even a perfect interpolation pattern is kept.
     sr = 100.0
-    peaks = _peaks(sr, [0.0, 0.35, 1.2])  # nothing before A and nothing past C to compare with
+    peaks = _peaks(sr, [0.0, 1.2, 1.55, 2.4, 3.6])
     assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()
+
+
+# --- QRS width above the noise floor ------------------------------------------
+# Hash noise keeps the derivative-energy envelope above 10% of its peak, so
+# the width crossing lands on the noise, not the QRS edge: 62 of 93 "PVCs"
+# on Teeny's 2026-08-25 report were normal beats 3-5 samples "wider" than
+# baseline. The threshold now also clears the local noise floor.
+from canine_holter.detection.detect import _qrs_energy_envelope
+
+
+def _triangle_beat(sample_rate, center_sec, width_sec, amplitude, duration_sec):
+    sig = np.zeros(int(duration_sec * sample_rate))
+    half = int(width_sec * sample_rate / 2)
+    center = int(center_sec * sample_rate)
+    ramp = np.linspace(0, amplitude, half + 1)
+    sig[center - half: center + 1] = ramp
+    sig[center: center + half + 1] = ramp[::-1]
+    return sig
+
+
+def test_qrs_width_is_unchanged_by_noise_that_would_otherwise_widen_it():
+    sr = 180.0
+    clean = _triangle_beat(sr, 2.0, 0.06, 2.0, 4.0)
+    noise = np.random.default_rng(0).normal(0, 0.08, clean.shape)
+    search_half = int(0.15 * sr)
+    peak = int(2.0 * sr)
+    width_clean = _qrs_width(_qrs_energy_envelope(clean, sr), peak, search_half, sr)
+    width_noisy = _qrs_width(_qrs_energy_envelope(clean + noise, sr), peak, search_half, sr)
+    assert abs(width_noisy - width_clean) <= 2.5 / sr  # within two samples either way
+
+
+def test_qrs_width_is_none_for_a_beat_buried_in_noise():
+    sr = 180.0
+    clean = _triangle_beat(sr, 2.0, 0.06, 0.05, 4.0)
+    noise = np.random.default_rng(1).normal(0, 0.5, clean.shape)
+    assert _qrs_width(_qrs_energy_envelope(clean + noise, sr), int(2.0 * sr), int(0.15 * sr), sr) is None
+
+
+def test_drop_interpolated_t_waves_acts_in_a_moderate_rhythm_under_100_bpm():
+    # 0.7 s rhythm (86 bpm): the T wave still lands 0.3 s after the QRS, past
+    # NeuroKit's 300 ms minimum spacing. 18 of the 93 "PVCs" on Teeny's
+    # 2026-08-25 report were T waves in a 0.75-0.85 s rhythm.
+    sr = 100.0
+    beats = [t * 0.7 for t in range(10)]
+    with_t = sorted(beats + [3.5 + 0.3])
+    assert drop_interpolated_t_waves(_peaks(sr, with_t), sr).tolist() == _peaks(sr, beats).tolist()

@@ -14,6 +14,14 @@ QRS_ENVELOPE_INTEGRATION_SEC = 0.03
 # Envelope must drop below this fraction of its value at the R-peak to
 # mark the QRS onset/offset boundary.
 QRS_WIDTH_THRESHOLD_FRACTION = 0.1
+# The crossing threshold must also clear the local noise floor: the median
+# of the envelope over the surrounding +/-1 s (QRS complexes occupy well
+# under half of any second). Hash noise otherwise holds the envelope above
+# 10% of the peak and the width lands on the noise, not the QRS edge - 62
+# of 93 "PVCs" on Teeny's 2026-08-25 report were normal beats measured
+# 3-5 samples wide of baseline that way.
+QRS_NOISE_FLOOR_FACTOR = 4.0
+QRS_NOISE_FLOOR_CONTEXT_SEC = 1.0
 # Peak-to-peak range within this window of a detected R-peak is its
 # amplitude; a peak under MIN_R_AMPLITUDE_FRACTION of the recording's
 # median R amplitude is a phantom (the detector inventing a beat inside a
@@ -49,7 +57,7 @@ FIDUCIAL_HALF_SEC = 0.05  # the beat is the largest deflection from baseline thi
 # the neighbouring intervals, not a running median, because resting sinus
 # arrhythmia moves the RR by 30-50% within a few beats. Known cost: a
 # genuinely interpolated R-on-T PVC at rest is dropped too.
-SLOW_RR_SEC = 0.8  # only intervals over this (< 75 bpm) serve as the sinus reference
+SLOW_RR_SEC = 0.6  # only intervals over this (< 100 bpm) serve as the sinus reference; at 75-100 bpm the T wave still clears NeuroKit's 300 ms spacing, and tachycardia is excluded by the median gate
 T_WAVE_MAX_COUPLING_SEC = 0.45
 T_WAVE_RHYTHM_TOLERANCE = 0.25  # |A->C - reference| within this fraction of it means B was interpolated
 
@@ -172,9 +180,11 @@ def drop_interpolated_t_waves(peaks: np.ndarray, sample_rate: float) -> np.ndarr
     slow sinus interval - the accepted interval before A, or C to the next
     peak more than T_WAVE_MAX_COUPLING_SEC after C (so C's own T wave is
     skipped). B is then a T wave interpolated into an undisturbed rhythm.
-    Slow rhythm is the median of the last LOCAL_RR_BEATS accepted intervals
-    over SLOW_RR_SEC; with fewer than three, the references alone decide.
-    Sequential and causal in the accepted intervals."""
+    Slow rhythm is the median of at least three of the last LOCAL_RR_BEATS
+    accepted intervals over SLOW_RR_SEC, and it is mandatory: without it, in
+    fast rhythm the look-ahead that skips C's T wave skips the real next
+    beat and a double interval matches A -> C. Sequential and causal in the
+    accepted intervals."""
     peaks = np.asarray(peaks, dtype=int)
     times = peaks / sample_rate
     keep = np.ones(len(times), dtype=bool)
@@ -182,7 +192,7 @@ def drop_interpolated_t_waves(peaks: np.ndarray, sample_rate: float) -> np.ndarr
     i = 1
     while i < len(times) - 1:
         a, b, c = times[i - 1], times[i], times[i + 1]
-        slow = len(history) < 3 or float(np.median(history[-LOCAL_RR_BEATS:])) > SLOW_RR_SEC
+        slow = len(history) >= 3 and float(np.median(history[-LOCAL_RR_BEATS:])) > SLOW_RR_SEC
         following = next((t for t in times[i + 2:] if t - c > T_WAVE_MAX_COUPLING_SEC), None)
         references = [rr for rr in (history[-1] if history else None, following - c if following is not None else None)
                       if rr is not None and rr > SLOW_RR_SEC]
@@ -212,16 +222,23 @@ def _qrs_width(
 ) -> float | None:
     """Width between the envelope's threshold crossings on either side of r_peak.
 
-    Returns None if the R-peak has no measurable energy, or if the envelope
-    never drops back below threshold within the search window on either side
-    (e.g. a beat too close to the start/end of the recording).
+    The threshold is QRS_WIDTH_THRESHOLD_FRACTION of the envelope at the
+    peak or QRS_NOISE_FLOOR_FACTOR times the local noise floor, whichever
+    is higher. Returns None if the R-peak has no measurable energy, if the
+    noise floor reaches the peak itself (a beat buried in noise), or if the
+    envelope never drops back below threshold within the search window on
+    either side (e.g. a beat too close to the start/end of the recording).
     """
     lo = max(0, r_peak - search_half)
     hi = min(len(envelope), r_peak + search_half)
     local_peak = envelope[r_peak]
     if local_peak <= 0:
         return None
-    threshold = QRS_WIDTH_THRESHOLD_FRACTION * local_peak
+    context_half = int(QRS_NOISE_FLOOR_CONTEXT_SEC * sample_rate)
+    noise_floor = float(np.median(envelope[max(0, r_peak - context_half): r_peak + context_half]))
+    threshold = max(QRS_WIDTH_THRESHOLD_FRACTION * local_peak, QRS_NOISE_FLOOR_FACTOR * noise_floor)
+    if threshold >= local_peak:
+        return None
 
     onset = None
     for i in range(r_peak, lo - 1, -1):
