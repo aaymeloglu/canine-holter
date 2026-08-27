@@ -17,7 +17,10 @@ QRS_WIDTH_THRESHOLD_FRACTION = 0.1
 # median R amplitude is a phantom (the detector inventing a beat inside a
 # long RR gap at slow resting rates), not a beat. Real PVCs can be smaller
 # than sinus beats, but not five times smaller on a working electrode.
-R_AMPLITUDE_WINDOW_SEC = 0.06
+# The window must span a whole QRS, not just the detector's peak: on a
+# negative QRS (small r, deep S) NeuroKit puts the peak on the r, and a
+# window that stops short of the S reads a real beat as a phantom.
+R_AMPLITUDE_WINDOW_SEC = QRS_WIDTH_SEARCH_WINDOW_SEC
 MIN_R_AMPLITUDE_FRACTION = 0.2
 
 

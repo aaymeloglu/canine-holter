@@ -156,6 +156,19 @@ def test_reject_keeps_a_genuinely_smaller_but_real_beat():
     assert kept.tolist() == [100, 200, 300, 400]
 
 
+def test_reject_keeps_a_negative_qrs_beat_whose_peak_sits_on_its_small_r_wave():
+    # Teeny's 2026-08-25 recording: lying down, the analysis lead's QRS is a
+    # small positive r then a deep S ~80 ms later. NeuroKit puts the peak on
+    # the r, and a +/-60 ms window never reaches the S, so 552 of the
+    # report's 1209 "pauses" (13.04 s longest) were real beats thrown away.
+    sr = 180.0
+    peaks = np.array([200, 400, 600, 800])
+    sig = _pulse_signal(sr, peaks, [2.0, 2.0, 0.25, 2.0], 1000)
+    sig[600 + 15] = -1.0  # the S wave, 83 ms after the r the detector chose
+    kept = _reject_low_amplitude_peaks(sig, peaks, sr)
+    assert kept.tolist() == [200, 400, 600, 800]
+
+
 def test_reject_returns_no_peaks_when_median_amplitude_is_zero():
     # Every "peak" on flat signal: there is nothing to vouch for, fail closed.
     sr = 100.0
