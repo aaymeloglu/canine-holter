@@ -92,13 +92,25 @@ For each consecutive pair of peaks (A, B) with at least 3 prior RRs:
 
 Walk peaks A, B, C with a running RR history of accepted intervals:
 
-- `local` = median of the last `LOCAL_RR_BEATS` accepted RRs; act only if
-  `local > SLOW_RR_SEC = 0.8`.
-- Drop B if `(B - A) < T_WAVE_MAX_COUPLING_SEC = 0.45` **and**
-  `|(C - A) - local| < T_WAVE_RHYTHM_TOLERANCE * local`, tolerance 0.25 (0.3 at most; sinus arrhythmia at rest varies RR by about that much):
-  removing B leaves the rhythm undisturbed, which a T wave does and a PVC
-  does not (a PVC that early either resets the sinus rhythm or is followed
-  by a compensatory pause, so A -> C is far from one local RR).
+- Slow rhythm: the median of the last `LOCAL_RR_BEATS` accepted RRs is
+  over `SLOW_RR_SEC = 0.8`; with fewer than three accepted RRs (cold
+  start) the references below decide alone. The gate is what stops a
+  double interval from a missed beat at tachycardia acting as a reference.
+- References: the accepted interval before A, and C to the next peak more
+  than `T_WAVE_MAX_COUPLING_SEC` after C (so C's own T wave is skipped);
+  only intervals over `SLOW_RR_SEC` count. Neighbouring intervals rather
+  than the running median because resting sinus arrhythmia moves the RR
+  by 30-50% within a few beats - the first version used the median and
+  removed one T wave in five.
+- Drop B if `(B - A) < T_WAVE_MAX_COUPLING_SEC = 0.45` **and** A -> C is
+  within `T_WAVE_RHYTHM_TOLERANCE = 0.25` of a reference: removing B
+  leaves the rhythm undisturbed, which a T wave does and a PVC does not
+  (a PVC that early either resets the sinus rhythm or is followed by a
+  compensatory pause, so A -> C is far from a neighbouring sinus interval).
+  A T wave whose A -> C falls in a sinus-arrhythmia swing larger than the
+  tolerance survives (one of five in the lying_t fixture); the tolerance
+  is not widened past 0.3 because that is where R-on-T PVCs that reset the
+  rhythm start to be dropped.
 - When B is dropped, `C - A` joins the RR history and the walk resumes at C.
 
 Known cost, accepted: a genuinely interpolated R-on-T PVC at rest (coupling
@@ -121,32 +133,46 @@ window is in seconds.
 
 ### Canine ground truth in CI
 
-Three ~15-20 s three-channel slices of Teeny's 2026-08-25 recording are
+Four 10-20 s three-channel slices of Teeny's 2026-08-25 recording are
 committed as `tests/fixtures/teeny_2026-08-25/<name>.npz` (`channels`,
-`sample_rate`, `beat_times` hand-counted from the strips) - the tachy,
-lying-down, and quiet windows above. A test runs `detect_beats` on channel
+`sample_rate`, `beat_times` hand-counted from zoomed plots) - the tachy,
+lying-down, and quiet windows above, plus `lying_t`, the same posture
+with the T waves NeuroKit detects as beats. A test runs `detect_beats` on channel
 0 of each and asserts sensitivity and precision at 150 ms. This is the
 first canine ground truth in the repo; ~100 KB total, no network.
 
-## Expected results (prototype, both passes)
+## Results (measured, both passes)
 
 | | before | after |
 |---|---|---|
-| tachy / lying / quiet windows | 21 / 12 / 7 | 30 / 12 / 7 |
+| tachy / lying / quiet fixtures (sensitivity, precision at 150 ms) | 20/23, 12/13, 7/7 | 21/23 (1.00), 12/13 (1.00), 7/7 (1.00) |
+| lying_t fixture (13 QRS; T waves detected as beats, P waves detected in place of a 0.03-0.3 mV QRS) | 18 detections | 14 detections, one T wave left; 0.77 / 0.71 capped by the P-wave offset |
 | VT runs (4+) | 1 | 0 |
 | longest pause | 9.69 s | 6.77 s |
-| PVCs | 96 | ~90 (14:25-15:25: 38 -> 13) |
-| couplets | 2 | 3-4 |
-| max HR (5-beat median) | 193 | 200-235 |
+| pauses | 895 | 883 |
+| PVCs | 96 | 93 (14:25-15:25: 38 -> 15) |
+| couplets / triplets | 2 / 1 | 4 / 2 |
+| max HR (5-beat median) | 193 | 235 at 06:43:06 - real: NeuroKit found 2 beats in 8 s of QRS spikes every 0.26 s on all three channels |
 | MIT-BIH 119 | 1.000 / 1.000 | 1.000 / 1.000 |
-| 2026-08-23 recording | 7 PVCs, 31 pauses | 7-9 PVCs, 29 pauses |
+| 2026-08-23 recording | 7 PVCs, 1 couplet, 31 pauses | 7 PVCs, 0 couplets, 29 pauses; max HR 193 -> 240 |
 
-The remaining ~90 PVCs are not believed accurate: they cluster in the
-exercise hour (08:25-09:25, motion noise at 4 mm/mV) and the lying-down
-stretch, not where ectopy would. The next piece of work is per-beat noise
+The tachycardia fix does what it was for: the VT run is gone, the longest
+pause halves, and beats at 230+ bpm are found where NeuroKit found almost
+none. The PVC count barely moves (96 -> 93) because the T-wave rule's
+gains in the lying-down hours are offset by the search-back reaching
+noisy, fast stretches (couplets 2 -> 4). The remaining ~93 PVCs are not
+believed accurate: they cluster in the exercise hour (08:25-09:25, 20;
+motion noise at 4 mm/mV) and the lying-down stretch (14:25-16:25, 27),
+not where ectopy would. The next piece of work is per-beat noise
 rejection (template-correlation SQI, the VT-safe option named in the
 2026-08-26 signal-quality spec); it depends on this one, because noise
 rules tuned on top of missed beats would be tuned wrong.
+
+Found while building the fixtures: lying down, Ch 3 shows the QRS at
+3.5 mV where Ch 1 shows a 0.03-0.3 mV notch, and with a wandering
+pacemaker the tall P wave on Ch 1 is what the detector finds on alternate
+beats. Multi-lead detection is the structural fix for that posture; it is
+out of scope here and the lying_t fixture is its acceptance test in waiting.
 
 ## Testing
 
