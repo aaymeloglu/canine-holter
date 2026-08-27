@@ -14,6 +14,14 @@ QRS_ENVELOPE_INTEGRATION_SEC = 0.03
 # Envelope must drop below this fraction of its value at the R-peak to
 # mark the QRS onset/offset boundary.
 QRS_WIDTH_THRESHOLD_FRACTION = 0.1
+# The crossing threshold must also clear the local noise floor: the median
+# of the envelope over the surrounding +/-1 s (QRS complexes occupy well
+# under half of any second). Hash noise otherwise holds the envelope above
+# 10% of the peak and the width lands on the noise, not the QRS edge - 62
+# of 93 "PVCs" on Teeny's 2026-08-25 report were normal beats measured
+# 3-5 samples wide of baseline that way.
+QRS_NOISE_FLOOR_FACTOR = 4.0
+QRS_NOISE_FLOOR_CONTEXT_SEC = 1.0
 # Peak-to-peak range within this window of a detected R-peak is its
 # amplitude; a peak under MIN_R_AMPLITUDE_FRACTION of the recording's
 # median R amplitude is a phantom (the detector inventing a beat inside a
@@ -212,16 +220,23 @@ def _qrs_width(
 ) -> float | None:
     """Width between the envelope's threshold crossings on either side of r_peak.
 
-    Returns None if the R-peak has no measurable energy, or if the envelope
-    never drops back below threshold within the search window on either side
-    (e.g. a beat too close to the start/end of the recording).
+    The threshold is QRS_WIDTH_THRESHOLD_FRACTION of the envelope at the
+    peak or QRS_NOISE_FLOOR_FACTOR times the local noise floor, whichever
+    is higher. Returns None if the R-peak has no measurable energy, if the
+    noise floor reaches the peak itself (a beat buried in noise), or if the
+    envelope never drops back below threshold within the search window on
+    either side (e.g. a beat too close to the start/end of the recording).
     """
     lo = max(0, r_peak - search_half)
     hi = min(len(envelope), r_peak + search_half)
     local_peak = envelope[r_peak]
     if local_peak <= 0:
         return None
-    threshold = QRS_WIDTH_THRESHOLD_FRACTION * local_peak
+    context_half = int(QRS_NOISE_FLOOR_CONTEXT_SEC * sample_rate)
+    noise_floor = float(np.median(envelope[max(0, r_peak - context_half): r_peak + context_half]))
+    threshold = max(QRS_WIDTH_THRESHOLD_FRACTION * local_peak, QRS_NOISE_FLOOR_FACTOR * noise_floor)
+    if threshold >= local_peak:
+        return None
 
     onset = None
     for i in range(r_peak, lo - 1, -1):
