@@ -151,6 +151,8 @@ def _caption_lines(caption: StripCaption) -> list[str]:
 
 
 def _significance_lines(caption: StripCaption) -> list[str]:
+    if not caption.significance:
+        return []
     return textwrap.wrap("\u25cf " + caption.significance, _CAPTION_WRAP)
 
 
