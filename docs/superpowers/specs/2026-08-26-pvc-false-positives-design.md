@@ -105,12 +105,20 @@ this be a T wave", and the answers overlap between 75 and 100 bpm.
 Unchanged. `Beat.qrs_duration` still means the energy-envelope width in
 seconds; `classify_beats` still labels `N`/`V`/`U` from RR and width only.
 
-## Expected results
+## Results (measured)
 
-2026-08-25: 93 -> ~20 PVCs (5 real, 9 residual T waves in sinus-arrhythmia
-swings the T-rule's tolerance cannot follow, 3 noise, 3 normal), couplets
-and triplets from the noisy stretches mostly gone. 2026-08-23: 7 -> 2, both
-real. The residual T waves are the largest remaining class and are a
+2026-08-25: 93 -> 20 PVCs (5 real, 9 residual T waves in sinus-arrhythmia
+swings the T-rule's tolerance cannot follow, 3 noise, 3 normal): 01:01:54,
+06:08:05, 08:45:58, 11:36:41, 16:15:51 are the real ones. Couplets 4 -> 1,
+triplets 2 -> 0, 60 beats now `U` (width unmeasurable in noise).
+2026-08-23: 7 -> 2, both real (17:35:35, 17:35:38).
+
+Found while implementing: the T-wave rule's cold-start fallback (references
+alone when fewer than three intervals are known) dropped real beats at
+tachycardia once the floor moved to 0.6 s - the look-ahead that skips C's
+T wave skips the real next beat in fast rhythm. The slow-rhythm gate is now
+mandatory; the `lying_t` fixture's precision floor is 0.65 because its
+first T wave starts cold. The residual T waves are the largest remaining class and are a
 single-lead problem (the lying-down posture): multi-lead detection remains
 the structural fix, as noted in the detector spec.
 

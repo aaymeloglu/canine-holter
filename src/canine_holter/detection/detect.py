@@ -57,7 +57,7 @@ FIDUCIAL_HALF_SEC = 0.05  # the beat is the largest deflection from baseline thi
 # the neighbouring intervals, not a running median, because resting sinus
 # arrhythmia moves the RR by 30-50% within a few beats. Known cost: a
 # genuinely interpolated R-on-T PVC at rest is dropped too.
-SLOW_RR_SEC = 0.8  # only intervals over this (< 75 bpm) serve as the sinus reference
+SLOW_RR_SEC = 0.6  # only intervals over this (< 100 bpm) serve as the sinus reference; at 75-100 bpm the T wave still clears NeuroKit's 300 ms spacing, and tachycardia is excluded by the median gate
 T_WAVE_MAX_COUPLING_SEC = 0.45
 T_WAVE_RHYTHM_TOLERANCE = 0.25  # |A->C - reference| within this fraction of it means B was interpolated
 
@@ -180,9 +180,11 @@ def drop_interpolated_t_waves(peaks: np.ndarray, sample_rate: float) -> np.ndarr
     slow sinus interval - the accepted interval before A, or C to the next
     peak more than T_WAVE_MAX_COUPLING_SEC after C (so C's own T wave is
     skipped). B is then a T wave interpolated into an undisturbed rhythm.
-    Slow rhythm is the median of the last LOCAL_RR_BEATS accepted intervals
-    over SLOW_RR_SEC; with fewer than three, the references alone decide.
-    Sequential and causal in the accepted intervals."""
+    Slow rhythm is the median of at least three of the last LOCAL_RR_BEATS
+    accepted intervals over SLOW_RR_SEC, and it is mandatory: without it, in
+    fast rhythm the look-ahead that skips C's T wave skips the real next
+    beat and a double interval matches A -> C. Sequential and causal in the
+    accepted intervals."""
     peaks = np.asarray(peaks, dtype=int)
     times = peaks / sample_rate
     keep = np.ones(len(times), dtype=bool)
@@ -190,7 +192,7 @@ def drop_interpolated_t_waves(peaks: np.ndarray, sample_rate: float) -> np.ndarr
     i = 1
     while i < len(times) - 1:
         a, b, c = times[i - 1], times[i], times[i + 1]
-        slow = len(history) < 3 or float(np.median(history[-LOCAL_RR_BEATS:])) > SLOW_RR_SEC
+        slow = len(history) >= 3 and float(np.median(history[-LOCAL_RR_BEATS:])) > SLOW_RR_SEC
         following = next((t for t in times[i + 2:] if t - c > T_WAVE_MAX_COUPLING_SEC), None)
         references = [rr for rr in (history[-1] if history else None, following - c if following is not None else None)
                       if rr is not None and rr > SLOW_RR_SEC]

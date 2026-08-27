@@ -92,10 +92,13 @@ For each consecutive pair of peaks (A, B) with at least 3 prior RRs:
 
 Walk peaks A, B, C with a running RR history of accepted intervals:
 
-- Slow rhythm: the median of the last `LOCAL_RR_BEATS` accepted RRs is
-  over `SLOW_RR_SEC = 0.8`; with fewer than three accepted RRs (cold
-  start) the references below decide alone. The gate is what stops a
-  double interval from a missed beat at tachycardia acting as a reference.
+- Slow rhythm: the median of at least three of the last `LOCAL_RR_BEATS`
+  accepted RRs is over `SLOW_RR_SEC`, and the gate is mandatory - a
+  cold-start fallback to the references alone was tried and dropped real
+  beats at tachycardia, because the look-ahead that skips C's T wave
+  skips the real next beat there and a double interval matches A -> C.
+  `SLOW_RR_SEC` was 0.8 s here and is 0.6 s since the PVC false-positives
+  spec (2026-08-26).
 - References: the accepted interval before A, and C to the next peak more
   than `T_WAVE_MAX_COUPLING_SEC` after C (so C's own T wave is skipped);
   only intervals over `SLOW_RR_SEC` count. Neighbouring intervals rather
