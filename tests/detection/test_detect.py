@@ -252,3 +252,54 @@ def test_fill_fast_gaps_keeps_one_candidate_per_refractory_period():
     peaks = np.array([int(round(t * sr)) for t in times if t != 2.0])
     filled = fill_fast_gaps(sig, peaks, sr)
     assert filled.tolist() == sorted(peaks.tolist() + [int(round(1.95 * sr))])
+
+
+# --- interpolated T-wave rejection --------------------------------------------
+# Lying down, Teeny's analysis lead shows the QRS as a ~0.3 mV spike and the
+# T wave as a ~0.7 mV trough 0.2-0.35 s later; past NeuroKit's 300 ms minimum
+# spacing the T wave is detected as a second beat, early and "wide", and
+# labelled V (38 in one hour of the 2026-08-25 report). The gradient feature
+# cannot tell them apart - the broad T scores higher than the tiny spike -
+# but timing can: removing a T-wave detection leaves the rhythm undisturbed,
+# while a PVC that early resets it or is followed by a compensatory pause.
+from canine_holter.detection.detect import drop_interpolated_t_waves
+
+
+def _peaks(sr, times_sec):
+    return np.array([int(round(t * sr)) for t in times_sec])
+
+
+def test_drop_interpolated_t_waves_removes_an_interpolated_candidate_in_slow_rhythm():
+    sr = 100.0
+    beats = [t * 1.2 for t in range(10)]
+    with_t = sorted(beats + [6.0 + 0.35])  # a "beat" 350 ms after beat 5, rhythm unchanged
+    assert drop_interpolated_t_waves(_peaks(sr, with_t), sr).tolist() == _peaks(sr, beats).tolist()
+
+
+def test_drop_interpolated_t_waves_keeps_a_pvc_followed_by_a_compensatory_pause():
+    sr = 100.0
+    beats = [t * 1.2 for t in range(6)] + [6.0 + 0.35] + [t * 1.2 for t in range(7, 10)]  # 6.0 -> 6.35 -> 8.4
+    peaks = _peaks(sr, beats)
+    assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()
+
+
+def test_drop_interpolated_t_waves_keeps_an_early_beat_that_resets_the_rhythm_by_more_than_the_tolerance():
+    # 6.0 -> 6.4 -> 8.0: the next beat is 2.0 s after A, 1.67x the local RR - not one RR.
+    sr = 100.0
+    beats = [t * 1.2 for t in range(6)] + [6.4, 8.0, 9.2, 10.4]
+    peaks = _peaks(sr, beats)
+    assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()
+
+
+def test_drop_interpolated_t_waves_is_off_in_fast_rhythm():
+    # At 0.4 s RR a candidate 0.35 s after a beat is simply the next beat.
+    sr = 100.0
+    beats = [t * 0.4 for t in range(10)] + [3.6 + 0.35]
+    peaks = _peaks(sr, sorted(beats))
+    assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()
+
+
+def test_drop_interpolated_t_waves_needs_a_rhythm_history_first():
+    sr = 100.0
+    peaks = _peaks(sr, [0.0, 1.2, 1.55, 2.4])  # too few RRs to know the rhythm
+    assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()

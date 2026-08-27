@@ -38,6 +38,18 @@ FILL_FEATURE_FRACTION = 0.35  # candidate gradient feature vs the neighbouring b
 FILL_REFRACTORY_SEC = 0.25  # enforced after the fiducial is placed, against both neighbours
 GRADIENT_SMOOTH_SEC = 0.1  # NeuroKit's own feature: |gradient| boxcar-smoothed
 FIDUCIAL_HALF_SEC = 0.05  # the beat is the largest deflection from baseline this close to the steepest point
+# T-wave rejection in slow rhythm. Lying down, Teeny's analysis lead shows
+# the QRS as a small spike and the T wave as a large trough 0.2-0.35 s
+# later; past NeuroKit's 300 ms minimum spacing the T is detected as a
+# beat. The gradient feature cannot separate them (the broad T scores ~2x
+# the spike), so the rule is timing: a candidate this soon after a beat,
+# whose removal leaves the beat-to-beat interval equal to the local RR, is
+# interpolated - a T wave. A PVC that early resets the rhythm or is
+# followed by a compensatory pause. Known cost: a genuinely interpolated
+# R-on-T PVC at rest is dropped too.
+SLOW_RR_SEC = 0.8  # local median RR over this (< 75 bpm) is "slow rhythm"
+T_WAVE_MAX_COUPLING_SEC = 0.45
+T_WAVE_RHYTHM_TOLERANCE = 0.25  # |A->C - local RR| within this fraction means B was interpolated
 
 
 def detect_beats(samples: np.ndarray, sample_rate: float) -> list[Beat]:
@@ -143,6 +155,34 @@ def fill_fast_gaps(cleaned: np.ndarray, peaks: np.ndarray, sample_rate: float) -
                 added.append(fiducial)
                 last = fiducial
     return np.array(sorted(set(peaks.tolist()) | set(added)), dtype=int)
+
+
+def drop_interpolated_t_waves(peaks: np.ndarray, sample_rate: float) -> np.ndarray:
+    """Drop a peak B that follows A within T_WAVE_MAX_COUPLING_SEC in slow
+    rhythm when the next peak C sits one local RR after A - B is a T wave
+    interpolated into an undisturbed rhythm. Sequential and causal: the
+    local RR is the median of the last LOCAL_RR_BEATS accepted intervals."""
+    peaks = np.asarray(peaks, dtype=int)
+    times = peaks / sample_rate
+    keep = np.ones(len(times), dtype=bool)
+    rr_history: list[float] = []
+    i = 1
+    while i < len(times) - 1:
+        a, b, c = times[i - 1], times[i], times[i + 1]
+        local_rr = float(np.median(rr_history[-LOCAL_RR_BEATS:])) if len(rr_history) >= 3 else None
+        if (
+            local_rr is not None
+            and local_rr > SLOW_RR_SEC
+            and (b - a) < T_WAVE_MAX_COUPLING_SEC
+            and abs((c - a) - local_rr) < T_WAVE_RHYTHM_TOLERANCE * local_rr
+        ):
+            keep[i] = False
+            rr_history.append(c - a)
+            i += 2
+            continue
+        rr_history.append(b - a)
+        i += 1
+    return peaks[keep]
 
 
 def _qrs_energy_envelope(cleaned: np.ndarray, sample_rate: float) -> np.ndarray:
