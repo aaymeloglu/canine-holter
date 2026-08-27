@@ -193,3 +193,132 @@ def test_detect_beats_reports_gap_as_one_long_rr_after_dropping_phantom(monkeypa
     beats = detect_beats(sig, sr)
     assert [b.time for b in beats] == [1.0, 2.0, 3.0, 5.0, 6.0]
     assert beats[3].rr_interval == 2.0
+
+
+# --- rate-gated search-back ---------------------------------------------------
+# NeuroKit's threshold rises with beat density until it sits on the QRS at
+# ~150 bpm and misses beats in fragments; the classifier then reads normal
+# beats against an inflated RR baseline as a "VT run". A gap of more than
+# 1.5x the local RR in fast rhythm is a missed beat, never sinus arrhythmia.
+from canine_holter.detection.detect import fill_fast_gaps
+
+
+def _spike_signal(sample_rate, times_sec, amplitudes, duration_sec):
+    """Zeros with a one-sample spike of the given amplitude at each time."""
+    sig = np.zeros(int(duration_sec * sample_rate))
+    for t, a in zip(times_sec, amplitudes):
+        sig[int(round(t * sample_rate))] = a
+    return sig
+
+
+def test_fill_fast_gaps_adds_the_missed_beat_in_a_fast_rhythm():
+    sr = 200.0
+    times = [t * 0.4 for t in range(12)]  # 150 bpm
+    sig = _spike_signal(sr, times, [2.0] * 12, 5.0)
+    peaks = np.array([int(round(t * sr)) for t in times if t != 2.0])  # beat 5 missed by the detector
+    filled = fill_fast_gaps(sig, peaks, sr)
+    assert filled.tolist() == [int(round(t * sr)) for t in times]
+
+
+def test_fill_fast_gaps_leaves_a_gap_in_slow_rhythm_alone():
+    # 1.2 s -> 2.4 s is sinus arrhythmia territory, not a missed beat, even
+    # with a candidate spike sitting inside the gap.
+    sr = 200.0
+    times = [t * 1.2 for t in range(8)]
+    sig = _spike_signal(sr, times, [2.0] * 8, 10.0)
+    peaks = np.array([int(round(t * sr)) for t in times if t != 6.0])
+    assert fill_fast_gaps(sig, peaks, sr).tolist() == peaks.tolist()
+
+
+def test_fill_fast_gaps_ignores_a_candidate_far_below_the_neighbours():
+    sr = 200.0
+    times = [t * 0.4 for t in range(12)]
+    amps = [2.0] * 12
+    amps[5] = 0.1  # 5% of the neighbours: noise, not a beat
+    sig = _spike_signal(sr, times, amps, 5.0)
+    peaks = np.array([int(round(t * sr)) for t in times if t != 2.0])
+    assert fill_fast_gaps(sig, peaks, sr).tolist() == peaks.tolist()
+
+
+def test_fill_fast_gaps_keeps_one_candidate_per_refractory_period():
+    # Two spikes 130 ms apart inside the gap: only one can be a beat, and it
+    # is the larger one.
+    sr = 200.0
+    times = [t * 0.4 for t in range(12)]
+    sig = _spike_signal(sr, times, [2.0] * 12, 5.0)
+    sig[int(round(2.0 * sr))] = 0.0
+    sig[int(round(1.95 * sr))] = 2.0
+    sig[int(round(2.08 * sr))] = 1.5
+    peaks = np.array([int(round(t * sr)) for t in times if t != 2.0])
+    filled = fill_fast_gaps(sig, peaks, sr)
+    assert filled.tolist() == sorted(peaks.tolist() + [int(round(1.95 * sr))])
+
+
+# --- interpolated T-wave rejection --------------------------------------------
+# Lying down, Teeny's analysis lead shows the QRS as a ~0.3 mV spike and the
+# T wave as a ~0.7 mV trough 0.2-0.35 s later; past NeuroKit's 300 ms minimum
+# spacing the T wave is detected as a second beat, early and "wide", and
+# labelled V (38 in one hour of the 2026-08-25 report). The gradient feature
+# cannot tell them apart - the broad T scores higher than the tiny spike -
+# but timing can: removing a T-wave detection leaves the rhythm undisturbed,
+# while a PVC that early resets it or is followed by a compensatory pause.
+from canine_holter.detection.detect import drop_interpolated_t_waves
+
+
+def _peaks(sr, times_sec):
+    return np.array([int(round(t * sr)) for t in times_sec])
+
+
+def test_drop_interpolated_t_waves_removes_an_interpolated_candidate_in_slow_rhythm():
+    sr = 100.0
+    beats = [t * 1.2 for t in range(10)]
+    with_t = sorted(beats + [6.0 + 0.35])  # a "beat" 350 ms after beat 5, rhythm unchanged
+    assert drop_interpolated_t_waves(_peaks(sr, with_t), sr).tolist() == _peaks(sr, beats).tolist()
+
+
+def test_drop_interpolated_t_waves_keeps_a_pvc_followed_by_a_compensatory_pause():
+    sr = 100.0
+    beats = [t * 1.2 for t in range(6)] + [6.0 + 0.35] + [t * 1.2 for t in range(7, 10)]  # 6.0 -> 6.35 -> 8.4
+    peaks = _peaks(sr, beats)
+    assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()
+
+
+def test_drop_interpolated_t_waves_keeps_an_early_beat_that_resets_the_rhythm_by_more_than_the_tolerance():
+    # 6.0 -> 6.4 -> 8.0: the next beat is 2.0 s after A, 1.67x the local RR - not one RR.
+    sr = 100.0
+    beats = [t * 1.2 for t in range(6)] + [6.4, 8.0, 9.2, 10.4]
+    peaks = _peaks(sr, beats)
+    assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()
+
+
+def test_drop_interpolated_t_waves_is_off_in_fast_rhythm():
+    # At 0.4 s RR a candidate 0.35 s after a beat is simply the next beat;
+    # no neighbouring interval is slow enough to be a sinus reference.
+    sr = 100.0
+    beats = [0.0, 0.4, 0.8, 1.2, 1.55, 1.95, 2.35, 2.75]
+    peaks = _peaks(sr, beats)
+    assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()
+
+
+def test_drop_interpolated_t_waves_follows_sinus_arrhythmia_beat_to_beat():
+    # RR lengthening 1.2 -> 1.5 -> 1.8: the T wave after the 1.5 s beat is
+    # judged against its neighbours, not a running average.
+    sr = 100.0
+    beats = [0.0, 1.2, 2.7, 4.5, 6.3]
+    with_t = sorted(beats + [2.7 + 0.35])
+    assert drop_interpolated_t_waves(_peaks(sr, with_t), sr).tolist() == _peaks(sr, beats).tolist()
+
+
+def test_drop_interpolated_t_waves_skips_the_next_beats_own_t_wave_when_looking_ahead():
+    # Both beats carry a detected T wave; the second T must not hide the
+    # sinus interval the first is compared with.
+    sr = 100.0
+    beats = [0.0, 1.4, 2.8, 4.2]
+    with_t = sorted(beats + [1.4 + 0.35, 2.8 + 0.35])
+    assert drop_interpolated_t_waves(_peaks(sr, with_t), sr).tolist() == _peaks(sr, beats).tolist()
+
+
+def test_drop_interpolated_t_waves_keeps_a_candidate_with_no_reference_interval():
+    sr = 100.0
+    peaks = _peaks(sr, [0.0, 0.35, 1.2])  # nothing before A and nothing past C to compare with
+    assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()
