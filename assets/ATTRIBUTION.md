@@ -35,3 +35,9 @@ for sz in 16 32 128 256 512; do
 done
 iconutil -c icns icon.iconset -o icon.icns
 ```
+
+`icon.ico` (Windows) is the same PNG, resized with Pillow only; to regenerate:
+
+```bash
+python -c "from PIL import Image; Image.open('icon-source/dog_face_3d.png').convert('RGBA').save('icon.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+```
