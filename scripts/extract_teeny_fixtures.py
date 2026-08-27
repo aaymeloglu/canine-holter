@@ -21,8 +21,11 @@ WINDOWS = {
     "tachy": (44560.45, 9.55, [0.222, 0.556, 0.900, 1.267, 1.633, 2.006, 2.394, 2.794, 3.194, 3.594, 3.994, 4.389, 4.800, 5.206, 5.639, 6.111, 6.617, 7.139, 7.589, 7.978, 8.344, 8.844, 9.361]),
     # 15:22:53, lying down: a 0.3 mV QRS spike then a 0.7 mV T trough 0.2-0.35 s later
     "lying": (68257.0, 20.0, [1.006, 2.900, 4.167, 4.950, 7.078, 9.122, 10.406, 11.172, 13.028, 15.317, 16.578, 17.372, 19.606]),
-    # 15:12:06.5, lying down, the T waves NeuroKit detects as beats (4 of them in 10.5 s)
-    "lying_t": (67610.5, 10.5, [0.417, 1.889, 3.872, 5.361, 6.633, 8.328, 9.678]),
+    # 15:12:00, lying down with a wandering pacemaker: the T waves NeuroKit
+    # detects as beats, and a QRS that is a 0.03-0.3 mV notch on Ch 1 (3.5 mV
+    # on Ch 3) so the detector lands on the tall P wave 130-170 ms earlier in
+    # alternate beats. Beat times are the QRS, snapped on Ch 3.
+    "lying_t": (67604.0, 18.3, [0.694, 2.128, 3.567, 5.267, 6.928, 8.522, 10.528, 11.989, 13.283, 14.978, 16.294, 17.378, 18.183]),
     # 17:06:18, upright and still, with a real 4.67 s sinus pause
     "quiet": (74462.0, 16.0, [2.456, 4.483, 5.961, 7.367, 12.033, 13.839, 15.672]),
 }

@@ -292,14 +292,33 @@ def test_drop_interpolated_t_waves_keeps_an_early_beat_that_resets_the_rhythm_by
 
 
 def test_drop_interpolated_t_waves_is_off_in_fast_rhythm():
-    # At 0.4 s RR a candidate 0.35 s after a beat is simply the next beat.
+    # At 0.4 s RR a candidate 0.35 s after a beat is simply the next beat;
+    # no neighbouring interval is slow enough to be a sinus reference.
     sr = 100.0
-    beats = [t * 0.4 for t in range(10)] + [3.6 + 0.35]
-    peaks = _peaks(sr, sorted(beats))
+    beats = [0.0, 0.4, 0.8, 1.2, 1.55, 1.95, 2.35, 2.75]
+    peaks = _peaks(sr, beats)
     assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()
 
 
-def test_drop_interpolated_t_waves_needs_a_rhythm_history_first():
+def test_drop_interpolated_t_waves_follows_sinus_arrhythmia_beat_to_beat():
+    # RR lengthening 1.2 -> 1.5 -> 1.8: the T wave after the 1.5 s beat is
+    # judged against its neighbours, not a running average.
     sr = 100.0
-    peaks = _peaks(sr, [0.0, 1.2, 1.55, 2.4])  # too few RRs to know the rhythm
+    beats = [0.0, 1.2, 2.7, 4.5, 6.3]
+    with_t = sorted(beats + [2.7 + 0.35])
+    assert drop_interpolated_t_waves(_peaks(sr, with_t), sr).tolist() == _peaks(sr, beats).tolist()
+
+
+def test_drop_interpolated_t_waves_skips_the_next_beats_own_t_wave_when_looking_ahead():
+    # Both beats carry a detected T wave; the second T must not hide the
+    # sinus interval the first is compared with.
+    sr = 100.0
+    beats = [0.0, 1.4, 2.8, 4.2]
+    with_t = sorted(beats + [1.4 + 0.35, 2.8 + 0.35])
+    assert drop_interpolated_t_waves(_peaks(sr, with_t), sr).tolist() == _peaks(sr, beats).tolist()
+
+
+def test_drop_interpolated_t_waves_keeps_a_candidate_with_no_reference_interval():
+    sr = 100.0
+    peaks = _peaks(sr, [0.0, 0.35, 1.2])  # nothing before A and nothing past C to compare with
     assert drop_interpolated_t_waves(peaks, sr).tolist() == peaks.tolist()

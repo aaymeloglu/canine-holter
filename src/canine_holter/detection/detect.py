@@ -43,13 +43,15 @@ FIDUCIAL_HALF_SEC = 0.05  # the beat is the largest deflection from baseline thi
 # later; past NeuroKit's 300 ms minimum spacing the T is detected as a
 # beat. The gradient feature cannot separate them (the broad T scores ~2x
 # the spike), so the rule is timing: a candidate this soon after a beat,
-# whose removal leaves the beat-to-beat interval equal to the local RR, is
-# interpolated - a T wave. A PVC that early resets the rhythm or is
-# followed by a compensatory pause. Known cost: a genuinely interpolated
-# R-on-T PVC at rest is dropped too.
-SLOW_RR_SEC = 0.8  # local median RR over this (< 75 bpm) is "slow rhythm"
+# whose removal leaves the beat-to-beat interval equal to a neighbouring
+# sinus interval, is interpolated - a T wave. A PVC that early resets the
+# rhythm or is followed by a compensatory pause. The comparison is with
+# the neighbouring intervals, not a running median, because resting sinus
+# arrhythmia moves the RR by 30-50% within a few beats. Known cost: a
+# genuinely interpolated R-on-T PVC at rest is dropped too.
+SLOW_RR_SEC = 0.8  # only intervals over this (< 75 bpm) serve as the sinus reference
 T_WAVE_MAX_COUPLING_SEC = 0.45
-T_WAVE_RHYTHM_TOLERANCE = 0.25  # |A->C - local RR| within this fraction means B was interpolated
+T_WAVE_RHYTHM_TOLERANCE = 0.25  # |A->C - reference| within this fraction of it means B was interpolated
 
 
 def detect_beats(samples: np.ndarray, sample_rate: float) -> list[Beat]:
@@ -64,10 +66,17 @@ def detect_beats(samples: np.ndarray, sample_rate: float) -> list[Beat]:
     valid width, with zero overlap between normal (0.069-0.078s) and PVC
     (0.158-0.183s) ranges, vs. the original delineation-based approach
     which returned NaN for 19/19 ground-truth PVC beats.
+
+    Two post-passes correct NeuroKit's two known failure modes on Teeny's
+    recordings: fill_fast_gaps recovers beats missed at tachycardia, and
+    drop_interpolated_t_waves removes T waves detected as beats in slow
+    rhythm. See docs/superpowers/specs/2026-08-26-detector-tachycardia-and-t-wave-design.md.
     """
     cleaned = nk.ecg_clean(samples, sampling_rate=sample_rate)
     _, r_info = nk.ecg_peaks(cleaned, sampling_rate=sample_rate)
     r_peaks = _reject_low_amplitude_peaks(cleaned, r_info["ECG_R_Peaks"], sample_rate)
+    r_peaks = fill_fast_gaps(cleaned, r_peaks, sample_rate)
+    r_peaks = drop_interpolated_t_waves(r_peaks, sample_rate)
     if len(r_peaks) < 2:
         return []
 
@@ -159,28 +168,32 @@ def fill_fast_gaps(cleaned: np.ndarray, peaks: np.ndarray, sample_rate: float) -
 
 def drop_interpolated_t_waves(peaks: np.ndarray, sample_rate: float) -> np.ndarray:
     """Drop a peak B that follows A within T_WAVE_MAX_COUPLING_SEC in slow
-    rhythm when the next peak C sits one local RR after A - B is a T wave
-    interpolated into an undisturbed rhythm. Sequential and causal: the
-    local RR is the median of the last LOCAL_RR_BEATS accepted intervals."""
+    rhythm when the interval A -> C (C the next peak) matches a neighbouring
+    slow sinus interval - the accepted interval before A, or C to the next
+    peak more than T_WAVE_MAX_COUPLING_SEC after C (so C's own T wave is
+    skipped). B is then a T wave interpolated into an undisturbed rhythm.
+    Slow rhythm is the median of the last LOCAL_RR_BEATS accepted intervals
+    over SLOW_RR_SEC; with fewer than three, the references alone decide.
+    Sequential and causal in the accepted intervals."""
     peaks = np.asarray(peaks, dtype=int)
     times = peaks / sample_rate
     keep = np.ones(len(times), dtype=bool)
-    rr_history: list[float] = []
+    history: list[float] = []
     i = 1
     while i < len(times) - 1:
         a, b, c = times[i - 1], times[i], times[i + 1]
-        local_rr = float(np.median(rr_history[-LOCAL_RR_BEATS:])) if len(rr_history) >= 3 else None
-        if (
-            local_rr is not None
-            and local_rr > SLOW_RR_SEC
-            and (b - a) < T_WAVE_MAX_COUPLING_SEC
-            and abs((c - a) - local_rr) < T_WAVE_RHYTHM_TOLERANCE * local_rr
+        slow = len(history) < 3 or float(np.median(history[-LOCAL_RR_BEATS:])) > SLOW_RR_SEC
+        following = next((t for t in times[i + 2:] if t - c > T_WAVE_MAX_COUPLING_SEC), None)
+        references = [rr for rr in (history[-1] if history else None, following - c if following is not None else None)
+                      if rr is not None and rr > SLOW_RR_SEC]
+        if slow and (b - a) < T_WAVE_MAX_COUPLING_SEC and any(
+            abs((c - a) - rr) < T_WAVE_RHYTHM_TOLERANCE * rr for rr in references
         ):
             keep[i] = False
-            rr_history.append(c - a)
+            history.append(c - a)
             i += 2
             continue
-        rr_history.append(b - a)
+        history.append(b - a)
         i += 1
     return peaks[keep]
 
