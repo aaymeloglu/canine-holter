@@ -105,3 +105,16 @@ def test_baseline_window_forgets_beats_older_than_window():
 
 def test_empty_beats_list_returns_empty_list():
     assert classify_beats([]) == []
+
+
+def test_a_beat_only_a_few_samples_wider_than_baseline_is_not_a_pvc():
+    # 1.28x but 17 ms wider: three samples at 180 Hz, jitter, not a wide QRS.
+    beats = [_beat(i * 0.8, 0.8 if i else None, 0.061) for i in range(10)]
+    beats[6] = _beat(beats[6].time - 0.3, 0.5, 0.078)
+    assert classify_beats(beats)[6].label == "N"
+
+
+def test_a_beat_both_proportionally_and_absolutely_wider_is_a_pvc():
+    beats = [_beat(i * 0.8, 0.8 if i else None, 0.061) for i in range(10)]
+    beats[6] = _beat(beats[6].time - 0.3, 0.5, 0.100)
+    assert classify_beats(beats)[6].label == "V"

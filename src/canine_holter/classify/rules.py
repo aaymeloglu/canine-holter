@@ -4,7 +4,8 @@ from dataclasses import replace
 from canine_holter.types import Beat
 
 PREMATURITY_RATIO = 0.85  # RR < 85% of local baseline -> premature
-QRS_WIDTH_RATIO = 1.25  # QRS > 125% of local baseline -> wide
+QRS_WIDTH_RATIO = 1.25  # QRS > 125% of local baseline -> wide ...
+QRS_WIDTH_MARGIN_SEC = 0.030  # ... and at least this much wider: 1.25x is three samples at 180 Hz; one small square on paper is 40 ms
 BASELINE_WINDOW = 8  # number of recent "N" beats used to compute baseline
 
 
@@ -12,8 +13,10 @@ def classify_beats(beats: list[Beat]) -> list[Beat]:
     """Label each beat "N" (normal), "V" (PVC), or "U" (undetermined).
 
     A beat is "V" only when it is BOTH premature (RR well below the local
-    baseline) AND wide (QRS well above the local baseline) - this matches
-    the standard clinical heuristic for identifying ventricular ectopy.
+    baseline) AND wide (QRS above the local baseline by QRS_WIDTH_RATIO and
+    by at least QRS_WIDTH_MARGIN_SEC - a ratio alone is sample jitter at
+    180 Hz) - this matches the standard clinical heuristic for identifying
+    ventricular ectopy.
     Baseline is computed causally from the most recent beats labeled "N",
     so thresholds adapt to each recording's (and each dog's) own rhythm
     rather than relying on a fixed literature value.
@@ -47,7 +50,10 @@ def classify_beats(beats: list[Beat]) -> list[Beat]:
                 rr_base = statistics.median(baseline_rr)
                 qrs_base = statistics.median(baseline_qrs)
                 is_premature = beat.rr_interval < PREMATURITY_RATIO * rr_base
-                is_wide = beat.qrs_duration > QRS_WIDTH_RATIO * qrs_base
+                is_wide = (
+                    beat.qrs_duration > QRS_WIDTH_RATIO * qrs_base
+                    and beat.qrs_duration - qrs_base >= QRS_WIDTH_MARGIN_SEC
+                )
                 label = "V" if (is_premature and is_wide) else "N"
             else:
                 # No baseline yet: nothing to measure prematurity/width
