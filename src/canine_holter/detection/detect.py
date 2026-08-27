@@ -1,5 +1,7 @@
 import neurokit2 as nk
 import numpy as np
+from scipy.ndimage import uniform_filter1d
+from scipy.signal import find_peaks
 from canine_holter.types import Beat
 
 # How far each side of an R-peak to search for the QRS envelope crossing
@@ -22,6 +24,20 @@ QRS_WIDTH_THRESHOLD_FRACTION = 0.1
 # window that stops short of the S reads a real beat as a phantom.
 R_AMPLITUDE_WINDOW_SEC = QRS_WIDTH_SEARCH_WINDOW_SEC
 MIN_R_AMPLITUDE_FRACTION = 0.2
+# Search-back for beats the detector missed at fast rates. NeuroKit's
+# threshold is 1.5x a 0.75 s mean of the gradient; at ~150 bpm that mean
+# rises until the threshold sits on the QRS and beats are lost in
+# fragments. In fast rhythm a gap over GAP_FACTOR x the local RR is a missed
+# beat; in slow rhythm it is sinus arrhythmia, so the pass is off there
+# (and T waves, which sit inside the refractory at fast rates, cannot be
+# filled in). LOCAL_RR_BEATS is the rhythm memory shared with the T-wave rule.
+LOCAL_RR_BEATS = 8
+FAST_RR_SEC = 0.8  # local median RR under this (>= 75 bpm) is "fast rhythm"
+GAP_FACTOR = 1.5
+FILL_FEATURE_FRACTION = 0.35  # candidate gradient feature vs the neighbouring beats' median
+FILL_REFRACTORY_SEC = 0.25  # enforced after the fiducial is placed, against both neighbours
+GRADIENT_SMOOTH_SEC = 0.1  # NeuroKit's own feature: |gradient| boxcar-smoothed
+FIDUCIAL_HALF_SEC = 0.05  # the beat is the largest deflection from baseline this close to the steepest point
 
 
 def detect_beats(samples: np.ndarray, sample_rate: float) -> list[Beat]:
@@ -74,6 +90,59 @@ def _reject_low_amplitude_peaks(
     if reference <= 0:
         return r_peaks[:0]
     return r_peaks[amplitudes >= MIN_R_AMPLITUDE_FRACTION * reference]
+
+
+def _gradient_feature(cleaned: np.ndarray, sample_rate: float) -> np.ndarray:
+    return uniform_filter1d(np.abs(np.gradient(cleaned)), max(1, int(GRADIENT_SMOOTH_SEC * sample_rate)))
+
+
+def _fiducial(cleaned: np.ndarray, index: int, sample_rate: float) -> int:
+    """The largest |deflection| from the preceding 200 ms baseline within
+    FIDUCIAL_HALF_SEC of index - polarity-agnostic, so a negative QRS lands
+    on its trough rather than its small r wave."""
+    half = int(FIDUCIAL_HALF_SEC * sample_rate)
+    lo, hi = max(0, index - half), min(len(cleaned), index + half + 1)
+    baseline = np.median(cleaned[max(0, index - int(0.2 * sample_rate)): index]) if index > 0 else 0.0
+    return lo + int(np.argmax(np.abs(cleaned[lo:hi] - baseline)))
+
+
+def fill_fast_gaps(cleaned: np.ndarray, peaks: np.ndarray, sample_rate: float) -> np.ndarray:
+    """Add beats inside gaps that are implausible for a fast local rhythm.
+
+    Only acts when the median of the previous LOCAL_RR_BEATS RRs is under
+    FAST_RR_SEC and the gap exceeds GAP_FACTOR times it. Candidates are
+    peaks of the gradient feature at least FILL_FEATURE_FRACTION of the
+    surrounding beats' feature, placed at their fiducial, at least
+    FILL_REFRACTORY_SEC from the previous accepted peak and from the gap's end.
+    """
+    peaks = np.asarray(peaks, dtype=int)
+    if len(peaks) < 2:
+        return peaks
+    feature = _gradient_feature(cleaned, sample_rate)
+    half = int(GRADIENT_SMOOTH_SEC * sample_rate)
+    peak_feature = np.array([feature[max(0, p - half): p + half + 1].max() for p in peaks])
+    refractory = int(FILL_REFRACTORY_SEC * sample_rate)
+    added = []
+    for i in range(1, len(peaks)):
+        a, b = peaks[i - 1], peaks[i]
+        previous_rr = np.diff(peaks[max(0, i - 1 - LOCAL_RR_BEATS): i]) / sample_rate
+        if len(previous_rr) < 3:
+            continue
+        local_rr = float(np.median(previous_rr))
+        if local_rr >= FAST_RR_SEC or (b - a) / sample_rate <= GAP_FACTOR * local_rr:
+            continue
+        reference = float(np.median(peak_feature[max(0, i - 1 - LOCAL_RR_BEATS): i + 1]))
+        lo, hi = a + refractory, b - refractory
+        if hi <= lo:
+            continue
+        candidates, _ = find_peaks(feature[lo:hi], height=FILL_FEATURE_FRACTION * reference, distance=refractory)
+        last = a
+        for candidate in candidates:
+            fiducial = _fiducial(cleaned, lo + candidate, sample_rate)
+            if fiducial - last >= refractory and b - fiducial >= refractory:
+                added.append(fiducial)
+                last = fiducial
+    return np.array(sorted(set(peaks.tolist()) | set(added)), dtype=int)
 
 
 def _qrs_energy_envelope(cleaned: np.ndarray, sample_rate: float) -> np.ndarray:

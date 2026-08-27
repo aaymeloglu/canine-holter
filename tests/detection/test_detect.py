@@ -193,3 +193,62 @@ def test_detect_beats_reports_gap_as_one_long_rr_after_dropping_phantom(monkeypa
     beats = detect_beats(sig, sr)
     assert [b.time for b in beats] == [1.0, 2.0, 3.0, 5.0, 6.0]
     assert beats[3].rr_interval == 2.0
+
+
+# --- rate-gated search-back ---------------------------------------------------
+# NeuroKit's threshold rises with beat density until it sits on the QRS at
+# ~150 bpm and misses beats in fragments; the classifier then reads normal
+# beats against an inflated RR baseline as a "VT run". A gap of more than
+# 1.5x the local RR in fast rhythm is a missed beat, never sinus arrhythmia.
+from canine_holter.detection.detect import fill_fast_gaps
+
+
+def _spike_signal(sample_rate, times_sec, amplitudes, duration_sec):
+    """Zeros with a one-sample spike of the given amplitude at each time."""
+    sig = np.zeros(int(duration_sec * sample_rate))
+    for t, a in zip(times_sec, amplitudes):
+        sig[int(round(t * sample_rate))] = a
+    return sig
+
+
+def test_fill_fast_gaps_adds_the_missed_beat_in_a_fast_rhythm():
+    sr = 200.0
+    times = [t * 0.4 for t in range(12)]  # 150 bpm
+    sig = _spike_signal(sr, times, [2.0] * 12, 5.0)
+    peaks = np.array([int(round(t * sr)) for t in times if t != 2.0])  # beat 5 missed by the detector
+    filled = fill_fast_gaps(sig, peaks, sr)
+    assert filled.tolist() == [int(round(t * sr)) for t in times]
+
+
+def test_fill_fast_gaps_leaves_a_gap_in_slow_rhythm_alone():
+    # 1.2 s -> 2.4 s is sinus arrhythmia territory, not a missed beat, even
+    # with a candidate spike sitting inside the gap.
+    sr = 200.0
+    times = [t * 1.2 for t in range(8)]
+    sig = _spike_signal(sr, times, [2.0] * 8, 10.0)
+    peaks = np.array([int(round(t * sr)) for t in times if t != 6.0])
+    assert fill_fast_gaps(sig, peaks, sr).tolist() == peaks.tolist()
+
+
+def test_fill_fast_gaps_ignores_a_candidate_far_below_the_neighbours():
+    sr = 200.0
+    times = [t * 0.4 for t in range(12)]
+    amps = [2.0] * 12
+    amps[5] = 0.1  # 5% of the neighbours: noise, not a beat
+    sig = _spike_signal(sr, times, amps, 5.0)
+    peaks = np.array([int(round(t * sr)) for t in times if t != 2.0])
+    assert fill_fast_gaps(sig, peaks, sr).tolist() == peaks.tolist()
+
+
+def test_fill_fast_gaps_keeps_one_candidate_per_refractory_period():
+    # Two spikes 130 ms apart inside the gap: only one can be a beat, and it
+    # is the larger one.
+    sr = 200.0
+    times = [t * 0.4 for t in range(12)]
+    sig = _spike_signal(sr, times, [2.0] * 12, 5.0)
+    sig[int(round(2.0 * sr))] = 0.0
+    sig[int(round(1.95 * sr))] = 2.0
+    sig[int(round(2.08 * sr))] = 1.5
+    peaks = np.array([int(round(t * sr)) for t in times if t != 2.0])
+    filled = fill_fast_gaps(sig, peaks, sr)
+    assert filled.tolist() == sorted(peaks.tolist() + [int(round(1.95 * sr))])
