@@ -32,4 +32,4 @@ pip install -e ".[dev]"
 pytest
 ```
 
-See `docs/superpowers/specs/` and `docs/superpowers/plans/` for design history.
+See `docs/superpowers/specs/` for design rationale and rejected alternatives; implementation history remains in git.

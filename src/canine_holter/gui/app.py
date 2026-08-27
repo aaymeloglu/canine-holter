@@ -16,8 +16,7 @@ class AnalysisResult:
 
 
 def analyze_and_report(input_path: str, out_dir: str) -> AnalysisResult:
-    """Runs the pipeline and captures success/failure as data, so this is
-    testable without a display and reusable by both the GUI and CLI."""
+    """Run the pipeline and return a result the GUI can display."""
     try:
         report_path = run_analysis(input_path, out_dir)
         return AnalysisResult(success=True, report_path=report_path, error_message=None)

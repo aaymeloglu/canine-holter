@@ -1,98 +1,101 @@
 # CLAUDE.md
 
-Guidance for agents working in this repo.
+Guidance for agents working in this repository.
 
-## What this is
+## Purpose and safety boundary
 
-A tool that reads ambulatory ECG (Holter monitor) recordings from a dog and screens for **PVC burden** - the count of premature ventricular complexes, which is the standard metric cardiologists use to screen Dobermans for occult dilated cardiomyopathy. It also flags secondary arrhythmias (brady/tachycardia, pauses) and PVC patterns (couplets, triplets, VT runs). Built around an ALBA Medical DR200 recorder (a rebadged NorthEast Monitoring unit).
+This tool reads ambulatory canine ECG recordings and screens for PVC burden, PVC patterns, bradycardia, tachycardia, and pauses. It currently targets the ALBA Medical DR200 recorder.
 
-**This is a screening/triage aid, not a diagnostic tool. It does not replace a cardiologist's read.** That framing is load-bearing: every generated report carries the disclaimer, and it must stay. Comparing numbers with published reference bands - including color-coding them green / amber / red - is expected; the disclaimer is what carries the not-a-diagnosis framing.
+**It is a screening/triage aid, not a diagnostic tool, and does not replace a cardiologist's read.** Every generated report must retain that disclaimer. Comparing measurements with published reference bands, including green/amber/red presentation, is expected; the disclaimer carries the not-a-diagnosis framing.
+
+Thresholds are provisional and are not clinically calibrated. Do not describe their output as a diagnosis.
 
 ## Architecture
 
-The pipeline is a linear flow, and each stage talks to the next **only through plain data structures**, never by reaching into another module's internals:
+The pipeline is linear:
 
 ```
 ingest → quality → detection → classify → arrhythmia → report
-         (loader picks the format)  (exclude_beats)   (+ pipeline wires it, cli/gui drive it)
 ```
 
-- `ingest/` - raw file to a `Recording` (samples + sample_rate + start_time + source). `loader.load_recording()` sniffs the input and dispatches: WFDB records, native DR200 `flash.dat`, or vendor-extracted `flashcN.dat` channels. Adding a new recorder format means adding a loader here and teaching the router about it - nothing downstream changes.
-- `quality/gate.py` - `assess_quality()`: samples in, `SignalQuality` (duration + excluded artifact spans) out. Amplitude rules per 5 s window against the recording's own median peak-to-peak (>4x: off-body swings / saturation; <0.1x: lead-off), a flat-line rule (>90% zero deltas), and the first and last minute unconditionally (hookup/removal, the HE/LX vendor convention); excluded windows within 30 s are bridged and padded 2 s. Kurtosis and spectral noise rules were tested and **rejected because they exclude ventricular flutter/VT** (100% of MIT-BIH 207's VFL windows) - read the 2026-08-26 spec's evidence table before adding any noise rule. `exclude_beats()` drops beats inside spans and resets the RR of the first beat after each, so a span can never read as a pause, run, or brady/tachy event. `summarize()` takes the `SignalQuality` and reports `duration_sec` / `analyzed_sec` / `excluded`; PVCs per 24 h scale by analyzed time.
-- `detection/detect.py` - `detect_beats()`: R-peak detection (NeuroKit2) + QRS width via a custom energy-envelope method, returns a list of unlabeled `Beat`s. The width threshold is 10% of the envelope at the peak or 4x the local noise floor (median envelope over ±1 s), whichever is higher - hash noise otherwise holds the envelope up and a normal beat measures 3-5 samples wide (62 of 93 "PVCs" on the 2026-08-25 report). Peaks under 20% of the recording's median R amplitude are dropped first: at slow resting rates NeuroKit invents beats inside long RR gaps, and those phantoms cascade into false PVCs (54 of 65 on Teeny's first recording). The amplitude is peak-to-peak over the whole QRS search window (±150 ms), not a tight window around the peak: on a negative QRS (small r, deep S - Teeny lying down) NeuroKit places the peak on the r, and a ±60 ms window read 552 real beats as phantoms on the 2026-08-25 recording, printing a 13 s pause where there were seven beats. Two post-passes then correct NeuroKit's known failure modes: `fill_fast_gaps` (rate-gated search-back - at ~150 bpm NeuroKit's threshold sits on the QRS and misses beats, which the classifier then read as a VT run; at 230 bpm it found 2 beats in 8 s) and `drop_interpolated_t_waves` (lying down, the T wave is detected as a beat 0.2-0.35 s after a small QRS spike; a candidate that early in slow rhythm whose removal leaves the beat-to-beat interval equal to a neighbouring sinus interval is a T wave; the rule needs three accepted intervals of rhythm history - a cold-start fallback dropped real beats at tachycardia). Both are gated on the local rhythm so each can only act where its failure mode exists; the 2026-08-26 detector spec has the bake-off of every alternative (no shipped detector or parameter set handles both). `tests/fixtures/teeny_2026-08-25/` holds four hand-counted windows of a real recording - the canine ground truth these are measured against; extend it before retuning any detection threshold.
-- `classify/rules.py` - `classify_beats()`: rules-based PVC labeling. A beat is "V" only if BOTH premature (short RR vs. a causal rolling baseline) AND wide (QRS over 1.25x baseline **and** at least 30 ms wider - the ratio alone is three samples at 180 Hz; the 2026-08-26 PVC false-positives spec has the measured separation: real PVCs 1.65x+, normal beats under 1.45x). This module is deliberately isolated behind `Beat in, labeled Beat out` so a learned model could replace it later without touching anything else.
-- `arrhythmia/burden.py` - `summarize()`: aggregates labeled beats into an `ArrhythmiaSummary` (PVC burden %, couplet/triplet/VT-run counts, sustained brady/tachy events, pauses, `heart_rate` min/mean/max with times - min/max are 5-beat medians so one phantom beat can't set them - the `longest_run`/`fastest_run` of 3+ PVCs, rated from the RRs inside the run, `duration_sec` / `analyzed_sec` / `excluded` from the `SignalQuality`, and `hourly` rows - per-hour analyzed seconds/beats/rates/PVCs/couplets/runs/pauses counted from the recording start to its end, last partial hour included).
-- `report/` - `generate.build_content()` turns beats + summary into a `ReportContent`: four `SummaryGroup`s of `SummaryRow`s (Recording, Heart rate, Ventricular ectopy, Pauses; each row is label + value + the short reference band printed beside it + an `ok`/`caution`/`alert` status from `reference.py`, or no status where no published band exists), two footer lines (color legend, source), the strip sections - heart-rate extremes first (fastest/slowest HR, longest pause, fastest run - the strips a reader checks first, and what would have exposed the off-body "pauses" on the first real recording), then flagged multi-beat runs, then isolated PVCs; the latter two capped at `MAX_STRIPS_PER_SECTION` chosen evenly through the recording with the cap stated in the heading; never cap silently - and the hourly table. `generate.write_report()` renders it to `report.pdf`, the only file written (its path is what `run_analysis` returns). Tests assert on `ReportContent`, not the PDF - matplotlib writes glyph codes, so the PDF is not greppable; end-to-end tests use the `report_text` fixture in `tests/conftest.py`, which spies on what reaches `write_pdf` (rows become `label: value (reference)` lines). `pdf.py` renders with matplotlib `PdfPages` (no extra dependency): the summary panels in a 2x2 grid on page 1 (values colored by status), timeline page with the hourly table beneath it (continued on its own pages past 26 rows), then strip pages; `timeline.py` draws the heart-rate trend over PVC/pause/brady/tachy event lanes from beats + summary only, with excluded spans as hatched grey bands; `strip.py` draws every lead stacked on a standard ECG grid at true clinical scale (25 mm/s, 10 mm/mV, and the scale actually used is always printed) with an N/V/? label over each beat, RR intervals around the flagged beats (every RR when the window is sparse), the flagged beats shaded, and a bracket on a pause; each strip carries a `StripCaption` (title, what it shows with the measured RR/QRS against the classifier's own baseline, whether it is significant, status) built in `generate.py`, and a one-page primer (`common.HOW_TO_READ_STRIPS`) precedes the first strip - the strips are written for a non-expert to check the software's calls, keep them that way; `common.py` holds the text/event helpers; `reference.py` holds the published bands (ESVC Doberman DCM guidelines, Wess et al. 2017) as short strings, the status rules, and the 24-h PVC scaling that is only computed for 20 h or more of analyzed time. Event times are wall-clock labels when `Recording.start_time` is known.
-- `pipeline.py` / `cli.py` / `gui/app.py` - `run_analysis()` wires the stages; the CLI and the Tkinter GUI both call it. The GUI is the artifact non-technical users run (see Packaging). Its logic is a frozen `AppState` plus module-level transitions (`choose_recording`, `choose_output`, `run`, the label/status text functions) that call the tkinter dialogs by module-level name so tests can monkeypatch them; `AnalyzerWindow` is the only widget code and runs the analysis on a worker thread, polling with `after()`.
+`pipeline.py` wires the stages; the CLI and GUI drive it. Stages exchange only the public data structures in `types.py` and `arrhythmia/burden.py`. Keep detection, quality, classification, and aggregation format-agnostic, and do not import another stage's private helpers.
 
-**The boundary contract is the most important design property here.** The classifier is swappable and `ingest` grows new formats precisely because modules only exchange `Recording`/`Beat`/`ArrhythmiaSummary`. Keep it that way: no module should import another's private helpers, and `detect`/`classify`/etc. must stay format-agnostic (they only ever see samples + a sample rate, then time + RR + QRS).
+- `ingest/`: supported files become a `Recording`. `loader.load_recording()` routes WFDB records, native DR200 `flash.dat`, and vendor-extracted `flashcN.dat`/`.raw` channels.
+- `quality/gate.py`: returns recording duration and excluded artifact spans. `exclude_beats()` drops beats inside those spans and resets the first RR afterward so artifact cannot become a pause, run, or rate event. Kurtosis and spectral-noise rules were rejected because they excluded ventricular flutter/VT; read the signal-quality spec before adding a noise rule.
+- `detection/detect.py`: NeuroKit2 R-peak detection plus custom QRS width measurement. Its amplitude window must cover the whole ±150 ms QRS search range. Rate-gated search-back and T-wave rejection address separate, locally gated failure modes. Extend the hand-counted Teeny fixtures before retuning thresholds.
+- `classify/rules.py`: causal rolling-baseline rules. A PVC must be both premature and wide. The sequential loop is intentional; future beats must never influence the current beat.
+- `arrhythmia/burden.py`: produces `ArrhythmiaSummary`, including burden, runs, pauses, rate events, heart-rate statistics, quality accounting, and hourly rows.
+- `report/`: builds plain `ReportContent`, then renders `report.pdf`. Reports include the disclaimer, reference bands, quality accounting, timeline, hourly table, and reviewable ECG strips. Strip caps must always be stated.
+- `gui/app.py`: a small Tkinter wrapper around `run_analysis()`. Analysis runs on a worker thread.
 
-### Data contracts (`types.py`)
+Detailed rationale, measurements, rejected approaches, and acceptance evidence live in `docs/superpowers/specs/`. Completed implementation steps belong in git history, not duplicated plans.
 
-- `Recording(samples: np.ndarray, sample_rate: float, start_time, source, channels=None, channel_names=())` - `frozen=True, eq=False` (the `eq=False` matters: the default dataclass `__eq__` raises on the numpy array field). `samples` is the 1-D analysis lead and is all that detection/quality/classification ever see; `channels` is every recorded lead, `(n_channels, n_samples)`, for the report's strips only (DR200 native: all three, `Ch 1`-`Ch 3`; WFDB: every signal; vendor-extracted `flashcN.dat`: `None`). `__post_init__` rejects a channel array that does not line up with `samples`.
-- `Beat(time, rr_interval, qrs_duration, label)` - `frozen=True`. `label` is `None` (undetected), `"N"`, `"V"`, or `"U"`.
+## Data contracts
 
-The pipeline is **sample-rate-agnostic** on purpose - it is validated at 180 Hz (DR200), 360 Hz (MIT-BIH), and 500 Hz (PhysioZoo). Do not hardcode a rate downstream of ingest.
+`Recording(samples, sample_rate, start_time, source, channels=None, channel_names=())` is frozen with `eq=False`. `samples` is the one-dimensional analysis lead. `channels`, when present, contains every display lead with shape `(n_channels, n_samples)`. Detection, quality, and classification only consume `samples`; extra channels are for report strips. Keep the channel array aligned with `samples`.
 
-## v1 is rules-based, not ML - on purpose
+`Beat(time, rr_interval, qrs_duration, label)` is frozen. Labels are `None` before classification, `"N"`, `"V"`, or `"U"`.
 
-There is no public canine-labeled PVC ECG dataset (checked exhaustively). Human data (MIT-BIH) can't stand in for canine ground truth - dogs have faster rates and different QRS morphology. So v1 uses causal, per-recording rolling-baseline thresholds rather than a trained model. The path to v2 is accumulating real Teeny recordings cross-checked against a cardiologist's read; the isolated `classify` module is the seam where a learned model would drop in. Don't add an ML classifier without real labeled canine data to validate it against.
+The downstream pipeline is sample-rate-agnostic and has been exercised at 180, 360, and 500 Hz. Never hardcode 180 Hz outside DR200 ingestion.
 
-## DR200 / `flash.dat` format (do not re-reverse-engineer this)
+## Classifier scope
 
-The DR200 writes NorthEast Monitoring's proprietary `flash.dat` to the SD card. This format was reverse-engineered for this project; the full spec and evidence are in **`docs/dr200-format.md`**, and the parser is `ingest/dr200.py`. Key facts so you don't rediscover them:
+Version 1 is deliberately rules-based. There is no public canine-labeled PVC dataset sufficient for a learned classifier, and human data is not a substitute for canine validation. A learned classifier belongs behind the existing classification boundary only after cardiologist-reviewed canine ground truth exists.
 
-- 512-byte blocks: `[u32 length=512][u8 type=0x1e][u8 0][u32 source_position][456 data bytes][42 reserved][u32 checksum]`. The first block is plaintext INI metadata (`SampleRate=180`, `SampleStorageFormat=1`, start date/time, serial).
-- Checksum invariant: `sum(block[:508]) + u32(block[508:]) == 0x4CB31` on every active block.
-- Data is a **non-linear 4-bit companding delta**, low-nibble-first, three channels interleaved per timepoint, accumulated continuously across blocks. The nibble→delta table is `0, +1, +3, +6, +12, +21, +38, +70, pace, -70, -38, -21, -12, -6, -3, -1`. Nibble 8 is a simultaneous pacemaker marker on all three channels (interpolated, not emitted as a voltage spike). A naive "signed 4-bit delta" model is WRONG - nibble 7 is +70, not +7, which is what lets a real QRS decode.
-- Scaling: 12.5 µV per count.
-- NorthEast's own tooling: `procfl.exe` (flash.dat → datacard) is **gated behind a HASP hardware dongle**. `unpackdc.exe` (datacard → 16-bit samples) is **public-domain and runs without the dongle**; it's a useful oracle for validating the decoder but is not shipped. The pure-Python parser exists specifically so the packaged app needs no vendor software or Wine.
-- The delta table was cross-validated byte-for-byte against `unpackdc` output on NorthEast's bundled demo recording. If you touch the table or decode loop, re-validate against that oracle, not against the parser's own encoder (that would be circular).
+## Native DR200 format
 
-## Testing conventions
+Do not re-reverse-engineer `flash.dat`; the evidence and full specification are in `docs/dr200-format.md`, and the parser is `ingest/dr200.py`.
 
-- **TDD.** Write the failing test, watch it fail, implement, watch it pass. Commit in small steps.
-- **Fail closed.** Parsers (especially `dr200.py`) must reject malformed/unsupported input with a clear error rather than silently producing a wrong signal. This is a medical-adjacent tool; a wrong number is worse than a loud failure. Every guard should have a test proving it fires.
-- **Tests must not be circular.** For codec/table logic, don't encode-with-table-T then decode-with-table-T and call it verified - a wrong T passes. Assert against literal expected values derived from an independent source (e.g. the `unpackdc` cross-check, or hand-computed physical values).
-- **Run the suite:** `pytest`. CI (`.github/workflows/ci.yml`) runs it on every push to `main` and every PR, headless under `xvfb` (the GUI module imports tkinter). Keep CI green.
-- **Coverage** is broad, not decoder-only. Genuinely hard-to-test surfaces (real Tk window construction in `gui/app.py::main`) are left uncovered deliberately - the testable core of the GUI (`analyze_and_report`, the file-picker logic) is monkeypatched instead. Don't chase 100% by testing Tk event loops.
+- Blocks are 512 bytes: length, type, source position, 456 data bytes, reserved bytes, and checksum.
+- Every active block satisfies `sum(block[:508]) + u32(block[508:]) == 0x4CB31`.
+- `SampleStorageFormat=1` uses low-nibble-first, three-channel, nonlinear four-bit deltas accumulated continuously across blocks.
+- The delta table is `0, +1, +3, +6, +12, +21, +38, +70, pace, -70, -38, -21, -12, -6, -3, -1`. Nibble 8 is a simultaneous pacemaker marker on all three channels, not a voltage delta.
+- Scaling is 12.5 µV per count.
+- The table and decode loop were validated byte-for-byte against NorthEast's `unpackdc` output. Revalidate against that independent oracle after any decoder change; never validate an encoder and decoder built from the same table against each other.
+- Native support is intentionally limited to 180 Hz, three-channel format 1. Reject other modes rather than guessing.
 
-## Workflow
+## Testing
 
-- Work on a branch and open a PR; CI must be green. PRs are **squash-merged** with the PR title and body as the commit message, so write the PR body as the commit message you want in `main`'s history. Merged branches are deleted automatically.
-- Design specs live in `docs/superpowers/specs/` and implementation plans in `docs/superpowers/plans/`, dated `YYYY-MM-DD-<topic>`. Write the spec before a non-trivial feature; it is the record of *why*.
+Use TDD for behavior changes: write the failing test, see it fail, implement, then see it pass.
 
-## Dev commands
+Parsers must fail closed with specific, actionable errors. Every malformed-input guard needs a test. Codec tests must use literal values or an independent oracle, not circular encode/decode fixtures.
+
+Run:
 
 ```bash
-pip install -e ".[dev]"          # install with test/build deps
-pytest                            # full suite
-pytest --cov=canine_holter --cov-report=term-missing   # coverage (needs pytest-cov)
-canine-holter <input> --out report/ [--start-time HH:MM]  # CLI
-python -m canine_holter.gui.app                         # GUI
+pip install -e ".[dev]"
+pytest
+pytest --cov=canine_holter --cov-report=term-missing
 ```
 
-Input to the CLI/GUI can be a native DR200 `flash.dat`, a WFDB record (base path or `.hea`), or a vendor-extracted `flashcN.dat`/`.raw` channel.
+CI runs the suite on every push to `main` and every pull request. Do not chase 100% coverage by testing Tk event loops; test GUI controller behavior at its boundaries.
 
-## Coding conventions
+## Workflow and style
 
-- Python 3.11+, numpy for signal work (vectorize; the decode loop is per-block but vectorized within a block).
-- Frozen dataclasses for data contracts.
-- Private helpers are `_prefixed` and stay module-local.
-- Raise specific, actionable errors (`NativeDR200FormatError` for flash.dat problems, naming the block/field at fault).
-- Match the surrounding style; keep comments to constraints the code can't express (e.g. why a loop must stay sequential/causal), not narration.
+- Work on a branch and open a PR against `main`; CI must be green.
+- PRs are squash-merged, using the PR title and body as the commit message.
+- Write a dated design spec in `docs/superpowers/specs/` before a non-trivial feature. Specs record why; git records implementation history.
+- Use Python 3.11+ and NumPy for signal work. Vectorize where practical, except for stateful/causal loops.
+- Use frozen dataclasses for boundary data.
+- Prefix module-private helpers with `_` and keep them module-local.
+- Prefer specific errors such as `NativeDR200FormatError`, naming the bad block or field.
+- Comments should preserve constraints and rationale the code cannot express, not narrate implementation history.
 
-## Packaging & release
+## Running and packaging
 
-The GUI ships via GitHub Releases so a non-technical user can download and run it with no Python: a signed, notarized macOS `.app` in `canine-holter.dmg`, and an **unsigned** Windows onedir build in `canine-holter-windows.zip` (SmartScreen warns on first run; the README tells the user what to click - signing needs a certificate or Azure Trusted Signing, not yet set up). `canine-holter.spec` (PyInstaller, onedir) builds both from the same file: the macOS `BUNDLE` takes `assets/icon.icns`, the Windows `EXE` takes `assets/icon.ico`; both are resized from the same Microsoft Fluent Emoji "Dog face" 3D PNG (MIT - see `assets/ATTRIBUTION.md`; regenerate with `sips`/`iconutil` and Pillow only, never hand-drawn), and the bundle version is read from the installed package metadata. `.github/workflows/release.yml` (triggered on `v*` tags) runs `build-macos` (Homebrew Python for a working tkinter, codesign, notarize) and `build-windows` (setup-python) in parallel, then a `release` job creates the GitHub release with both files. Tagging `vX.Y.Z` and pushing the tag cuts a release.
+```bash
+canine-holter <input> --out report/ [--start-time HH:MM]
+python -m canine_holter.gui.app
+```
 
-Signing secrets live in the repo's Actions secrets (`APPLE_*`). Note there are two distinct "Andrew Aymeloglu" Developer ID certs in the Apple account (this repo's and the `hedgehog` repo's) that are indistinguishable by name in Apple's portal - tell them apart by expiration date if you ever need to.
+The GUI ships through GitHub Releases as a signed/notarized macOS app and an unsigned Windows onedir build. `canine-holter.spec` builds both. Icons come from the attributed Microsoft Fluent Emoji source in `assets/`; do not replace them with unlicensed or hand-drawn variants.
 
-## Known limits / open items
+`.github/workflows/release.yml` builds both platforms for `v*` tags and creates the release. Apple signing secrets live in Actions. Two Developer ID certificates have the same display name; distinguish this repository's certificate from the `hedgehog` certificate by expiration date.
 
-- Native `flash.dat` support is `SampleStorageFormat=1`, 180 Hz, three-channel only; other modes are rejected rather than guessed.
-- The pipeline currently analyzes channel 0; the native parser accepts a channel index in Python but the CLI/GUI don't expose it yet.
-- Pacemaker-marker handling is faithful to the documented format but only tested synthetically (no real pacemaker recording available; dogs rarely have them).
-- Thresholds (PVC prematurity/width ratios, phantom-peak amplitude fraction, brady/tachy/pause limits) are provisional and per-recording, not clinically calibrated. Calibration waits on real cardiologist-reviewed Teeny recordings.
-- Quality gating catches severe artifact (off-body swings, saturation, flat line, lead-off) and the edge minutes. Moderate noise with readable QRS complexes and mid-recording hash noise at normal amplitude are not excluded (the VT-safe option to evaluate for that is a template-correlation SQI, not kurtosis).
-- PVC count on the 2026-08-25 recording is 20 against ~5 the strips support: 9 are T waves in sinus-arrhythmia swings the T-rule's 25% tolerance cannot follow (all in the lying-down posture), 3 are noise with no QRS under them, 3 are normal beats. A template-correlation SQI was tested and does not separate PVCs from normal beats (both correlate 0.75-0.98 with the local template); do not reach for it again. The PVC thresholds are calibrated against the author's read of every flagged beat on two recordings, not a cardiologist's - the 2026-08-26 PVC false-positives spec says which numbers rest on that. Lying down is a lead-axis problem - Ch 3 shows a 3.5 mV QRS where Ch 1 shows a 0.03-0.3 mV notch, and the detector lands on the tall P wave of a wandering pacemaker on alternate beats - and multi-lead detection is the structural fix; the `lying_t` fixture is its acceptance test in waiting.
+## Known limits
+
+- The pipeline analyzes channel 0; CLI and GUI do not yet expose channel selection.
+- Pacemaker handling is format-faithful but only synthetically tested.
+- Detection/classification and brady/tachy/pause thresholds remain provisional.
+- Quality gating catches severe artifact and the first/last minute, but not all moderate or normal-amplitude hash noise. Do not add kurtosis or template-correlation SQI without new evidence; existing specs document why they failed.
+- The current single-lead detector still produces false PVCs in the lying-down posture because the QRS axis shifts to another channel. Multi-lead detection is the structural fix, and the `lying_t` fixture is its pending acceptance case.

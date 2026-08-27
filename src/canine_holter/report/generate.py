@@ -1,7 +1,7 @@
 """Turns labeled beats + summary into the report content (plain data) and
 writes it as report.pdf - the only output file."""
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import numpy as np
 from canine_holter.types import Beat
@@ -77,14 +77,19 @@ class StripCaption:
 
 
 @dataclass(frozen=True)
+class StripItem:
+    """One rhythm strip and the text/annotation rendered with it."""
+    run: list[Beat]
+    label: str
+    caption: StripCaption
+    pause: tuple[float, float] | None = None
+
+
+@dataclass(frozen=True)
 class StripSection:
-    """One section of rhythm strips: a heading, the PVC runs shown (already
-    capped), one label per run, and one caption per run."""
+    """One capped section of rhythm strips."""
     heading: str
-    runs: list[list[Beat]]
-    labels: list[str]
-    captions: list[StripCaption]
-    pauses: list[tuple[float, float] | None] = field(default_factory=list)  # per run: a gap to bracket on the strip
+    items: list[StripItem]
 
 
 @dataclass(frozen=True)
@@ -290,13 +295,15 @@ def _section(title: str, runs: list[list[Beat]], labeler, beats: list[Beat], sta
     if not runs:
         return None
     shown = select_evenly(runs, MAX_STRIPS_PER_SECTION)
-    return StripSection(
-        heading=section_heading(title, len(shown), len(runs)),
-        runs=shown,
-        labels=[labeler(i, run, start_time) for i, run in enumerate(shown)],
-        captions=[_pvc_caption(i, run, beats, start_time) for i, run in enumerate(shown)],
-        pauses=[None] * len(shown),
-    )
+    items = [
+        StripItem(
+            run=run,
+            label=labeler(i, run, start_time),
+            caption=_pvc_caption(i, run, beats, start_time),
+        )
+        for i, run in enumerate(shown)
+    ]
+    return StripSection(section_heading(title, len(shown), len(runs)), items)
 
 
 def _beat_at(beats: list[Beat], time: float) -> Beat:
@@ -319,48 +326,57 @@ def _extremes_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time:
     if hr is None:
         return None
     window = f"{HR_EXTREME_WINDOW_BEATS} beats"
-    runs = [[_beat_at(beats, hr.max_time)], [_beat_at(beats, hr.min_time)]]
-    labels = [
-        f"Fastest heart rate: {hr.max_bpm:.0f} bpm at {format_time(hr.max_time, start_time)}",
-        f"Slowest heart rate: {hr.min_bpm:.0f} bpm at {format_time(hr.min_time, start_time)}",
-    ]
-    captions = [
-        StripCaption(
-            f"Fastest heart rate · {short_time(hr.max_time, start_time)}",
-            f"{hr.max_bpm:.0f} bpm averaged over {window}.",
-            FASTEST_HR_SIGNIFICANCE,
+    items = [
+        StripItem(
+            run=[_beat_at(beats, hr.max_time)],
+            label=f"Fastest heart rate: {hr.max_bpm:.0f} bpm at {format_time(hr.max_time, start_time)}",
+            caption=StripCaption(
+                f"Fastest heart rate · {short_time(hr.max_time, start_time)}",
+                f"{hr.max_bpm:.0f} bpm averaged over {window}.",
+                FASTEST_HR_SIGNIFICANCE,
+            ),
         ),
-        StripCaption(
-            f"Slowest heart rate · {short_time(hr.min_time, start_time)}",
-            f"{hr.min_bpm:.0f} bpm averaged over {window}; the gaps between beats are printed in seconds.",
-            SLOWEST_HR_SIGNIFICANCE,
+        StripItem(
+            run=[_beat_at(beats, hr.min_time)],
+            label=f"Slowest heart rate: {hr.min_bpm:.0f} bpm at {format_time(hr.min_time, start_time)}",
+            caption=StripCaption(
+                f"Slowest heart rate · {short_time(hr.min_time, start_time)}",
+                f"{hr.min_bpm:.0f} bpm averaged over {window}; the gaps between beats are printed in seconds.",
+                SLOWEST_HR_SIGNIFICANCE,
+            ),
         ),
     ]
-    pauses: list[tuple[float, float] | None] = [None, None]
     if summary.pauses:
         pause = _pause_beats(beats, summary)
-        runs.append(pause)
-        pauses.append((pause[0].time, pause[-1].time))
-        labels.append(
-            f"Longest pause: {summary.longest_pause_sec:.2f} s, ending at {format_time(pause[-1].time, start_time)}"
-        )
         status = pause_status(summary.longest_pause_sec)
-        captions.append(StripCaption(
-            f"Longest pause · {short_time(pause[-1].time, start_time)}",
-            f"No beat for {summary.longest_pause_sec:.2f} s.",
-            PAUSE_SIGNIFICANCE[status],
-            status,
+        items.append(StripItem(
+            run=pause,
+            label=(
+                f"Longest pause: {summary.longest_pause_sec:.2f} s, ending at "
+                f"{format_time(pause[-1].time, start_time)}"
+            ),
+            caption=StripCaption(
+                f"Longest pause · {short_time(pause[-1].time, start_time)}",
+                f"No beat for {summary.longest_pause_sec:.2f} s.",
+                PAUSE_SIGNIFICANCE[status],
+                status,
+            ),
+            pause=(pause[0].time, pause[-1].time),
         ))
     if summary.fastest_run is not None:
         run = next(r for r in pvc_runs(beats) if r[0].time == summary.fastest_run.start_time)
-        runs.append(run)
-        pauses.append(None)
-        labels.append(f"Fastest run: {_run_text(summary.fastest_run, start_time)}")
         caption = _pvc_caption(0, run, beats, start_time)
-        captions.append(StripCaption(
-            f"Fastest run · {short_time(run[0].time, start_time)}", caption.what, caption.significance, caption.status
+        items.append(StripItem(
+            run=run,
+            label=f"Fastest run: {_run_text(summary.fastest_run, start_time)}",
+            caption=StripCaption(
+                f"Fastest run · {short_time(run[0].time, start_time)}",
+                caption.what,
+                caption.significance,
+                caption.status,
+            ),
         ))
-    return StripSection(heading=EXTREMES_TITLE, runs=runs, labels=labels, captions=captions, pauses=pauses)
+    return StripSection(EXTREMES_TITLE, items)
 
 
 def build_content(beats: list[Beat], summary: ArrhythmiaSummary, start_time: datetime | None) -> ReportContent:

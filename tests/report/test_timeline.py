@@ -1,13 +1,16 @@
 import os
 import tempfile
 from datetime import datetime
-from canine_holter.types import Beat
-from canine_holter.arrhythmia.burden import ArrhythmiaSummary
+
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+
+from canine_holter.arrhythmia.burden import ArrhythmiaSummary
 from canine_holter.report.timeline import draw_timeline
+from canine_holter.types import Beat
 
 
 def _beat(time, rr, label):
@@ -23,9 +26,14 @@ def _summary(**kw):
     return ArrhythmiaSummary(**base)
 
 
-def _render(beats, summary, start_time):
+def _draw(beats, summary, start_time):
     fig = plt.figure(figsize=(12, 5))
-    draw_timeline(fig, GridSpec(1, 1, figure=fig)[0], beats, summary, start_time)
+    axes = draw_timeline(fig, GridSpec(1, 1, figure=fig)[0], beats, summary, start_time)
+    return fig, axes
+
+
+def _render(beats, summary, start_time):
+    fig, _ = _draw(beats, summary, start_time)
     with tempfile.TemporaryDirectory() as out_dir:
         out = os.path.join(out_dir, "timeline.png")
         fig.savefig(out)
@@ -42,12 +50,22 @@ def test_renders_with_every_event_type_and_wall_clock():
         tachycardia_events=[(100.0, 100.5)],
         pauses=[50.0, 60.0],
     )
-    _render(beats, summary, datetime(2026, 8, 23, 15, 33, 8))
+    fig, (_, ax_ev) = _draw(beats, summary, datetime(2026, 8, 23, 15, 33, 8))
+
+    assert [tick.get_text() for tick in ax_ev.get_yticklabels()] == ["Tachy", "Brady", "Pause", "PVC"]
+    assert len(ax_ev.collections) == 34  # 30 PVCs, two pauses, one brady event, one tachy event
+    assert ax_ev.get_xlabel() == "time of day"
+    assert isinstance(ax_ev.xaxis.get_major_formatter(), mdates.DateFormatter)
+    plt.close(fig)
 
 
 def test_renders_without_start_time():
     beats = [_beat(i * 0.8, 0.8 if i else None, "N") for i in range(300)]
-    _render(beats, _summary(), None)
+    fig, (_, ax_ev) = _draw(beats, _summary(), None)
+
+    assert ax_ev.get_xlabel() == "minutes from start"
+    assert ax_ev.get_xlim()[0] < 0 < ax_ev.get_xlim()[1]
+    plt.close(fig)
 
 
 def test_renders_with_no_events_and_no_beats():
