@@ -212,7 +212,7 @@ def summary_groups(summary: ArrhythmiaSummary, start_time: datetime | None) -> l
     ]
 
 
-ISOLATED_SIGNIFICANCE = "One PVC on its own is common in healthy dogs; what matters is the total per 24 h (page 1)."
+ISOLATED_SIGNIFICANCE = ""  # said once in the primer (common.HOW_TO_READ_STRIPS), not under every strip
 FASTEST_HR_SIGNIFICANCE = "Fast rates during play or excitement are expected; a rate this fast at rest is not."
 SLOWEST_HR_SIGNIFICANCE = "Resting dogs commonly slow to this (sinus arrhythmia)."
 PAUSE_SIGNIFICANCE = {

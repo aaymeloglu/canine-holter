@@ -93,6 +93,7 @@ HOW_TO_READ_STRIPS = [
     "",
     "A PVC is a beat with a different shape from its neighbours (usually wider) that arrives early",
     "and is usually followed by a longer gap. That is what to look for when checking a V label.",
+    "One PVC on its own is common in healthy dogs; what matters is the total per 24 h (page 1).",
     "",
     "Under each strip's title: what the strip shows, with the measurements behind the label, and",
     "whether it matters, judged against the same published bands as page 1 (green / amber / red).",

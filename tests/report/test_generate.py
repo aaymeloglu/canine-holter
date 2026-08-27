@@ -268,7 +268,7 @@ def test_isolated_pvc_caption_quotes_the_measurements_behind_the_label():
         "The marked beat arrived 0.40 s after the beat before it (typical here 0.80 s) and its QRS"
         " lasts 0.12 s (typical 0.08 s): early and wide is what makes it a PVC."
     )
-    assert "common in healthy dogs" in caption.significance
+    assert caption.significance == ""  # said once in the primer, not under every strip
     assert caption.status is None
 
 
