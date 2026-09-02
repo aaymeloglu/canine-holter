@@ -154,3 +154,18 @@ def test_run_analysis_start_time_override_appears_in_report(report_text):
     with tempfile.TemporaryDirectory() as out_dir:
         run_analysis(input_path, out_dir, start_time=datetime(2026, 8, 23, 15, 36))
         assert "Start: 2026-08-23 15:36:00" in report_text()
+
+
+def test_run_analysis_hands_the_start_time_to_the_summary_so_hours_align_to_the_clock(monkeypatch, report_text):
+    import canine_holter.pipeline as pipeline
+    seen = {}
+
+    def spy(beats, **kw):
+        seen.update(kw)
+        return summarize(beats, **kw)
+
+    monkeypatch.setattr(pipeline, "summarize", spy)
+    input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
+    with tempfile.TemporaryDirectory() as out_dir:
+        run_analysis(input_path, out_dir, start_time=datetime(2026, 8, 23, 15, 36))
+    assert seen["start_time"] == datetime(2026, 8, 23, 15, 36)

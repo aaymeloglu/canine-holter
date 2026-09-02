@@ -1,5 +1,5 @@
-import math
 from dataclasses import dataclass, field
+from datetime import datetime
 import numpy as np
 from canine_holter.quality.gate import SignalQuality
 from canine_holter.types import Beat
@@ -53,10 +53,10 @@ class RunStats:
 
 @dataclass(frozen=True)
 class HourRow:
-    """One hour of the recording, counted from its start (the last row is
-    the partial hour to the final beat). A beat on the boundary belongs to
-    the hour it starts; runs and couplets count in the hour of their first
-    beat. Rates are None for an hour with fewer than HR_EXTREME_WINDOW_BEATS
+    """One row of the hourly table: a clock hour when the recording start
+    is known (the first and last rows are partial), else an hour from the
+    recording start. A beat on the boundary belongs to the row it starts;
+    runs and couplets count in the row of their first beat. Rates are None for an hour with fewer than HR_EXTREME_WINDOW_BEATS
     RR intervals; min/max use the same windowed medians as HeartRateStats."""
     start_sec: float
     end_sec: float
@@ -185,28 +185,44 @@ def run_stats(beats: list[Beat]) -> list[RunStats]:
     return stats
 
 
+def _row_edges(
+    duration_sec: float, last_beat: float | None, start_time: datetime | None
+) -> list[tuple[float, float, float]]:
+    """(start, end, stop) of each hourly row: end is where the row ends on
+    the page, stop the boundary its beats are counted up to, so the beat
+    at the end of a partial last row still belongs to it. With a known
+    start the first row ends at the next clock hour; otherwise rows are
+    HOUR_SEC from the recording start. A beat exactly at a duration that
+    falls on a boundary still gets its (zero-length) row rather than
+    vanishing from the table."""
+    end = max(duration_sec, last_beat or 0.0)
+    offset = start_time.minute * 60 + start_time.second + start_time.microsecond / 1e6 if start_time else 0.0
+    edges, start, step = [], 0.0, HOUR_SEC - offset
+    while start < end or (start == end and last_beat == end):
+        edges.append((start, min(start + step, end), start + step))
+        start, step = start + step, HOUR_SEC
+    return edges
+
+
 def hourly_rows(
-    beats: list[Beat], duration_sec: float, quality: SignalQuality | None = None
+    beats: list[Beat],
+    duration_sec: float,
+    quality: SignalQuality | None = None,
+    start_time: datetime | None = None,
 ) -> list[HourRow]:
-    """Per-hour counts and rates from the recording start to duration_sec;
-    see HourRow. A beat exactly at a duration that falls on the hour still
-    gets its (zero-length) row rather than vanishing from the table."""
+    """Per-row counts and rates from the recording start to duration_sec;
+    see HourRow and _row_edges."""
     if not beats and duration_sec <= 0:
         return []
-    n_hours = math.ceil(duration_sec / HOUR_SEC) if duration_sec > 0 else 0
-    if beats:
-        n_hours = max(n_hours, int(beats[-1].time // HOUR_SEC) + 1)
     centers, window_rr = _windowed_rr(beats)
     runs = pvc_runs(beats)
     rows = []
-    for hour in range(n_hours):
-        start = hour * HOUR_SEC
-        end = min(start + HOUR_SEC, max(duration_sec, start))
-        in_hour = [b for b in beats if start <= b.time < start + HOUR_SEC]
+    for start, end, stop in _row_edges(duration_sec, beats[-1].time if beats else None, start_time):
+        in_hour = [b for b in beats if start <= b.time < stop]
         rr = np.array([b.rr_interval for b in in_hour if b.rr_interval])
-        sel = (centers >= start) & (centers < start + HOUR_SEC)
+        sel = (centers >= start) & (centers < stop)
         enough = len(rr) >= HR_EXTREME_WINDOW_BEATS and sel.any()
-        hour_runs = [r for r in runs if start <= r[0].time < start + HOUR_SEC]
+        hour_runs = [r for r in runs if start <= r[0].time < stop]
         rows.append(HourRow(
             start_sec=float(start),
             end_sec=float(end),
@@ -266,7 +282,10 @@ def _sustained_hr_events(
 
 
 def summarize(
-    beats: list[Beat], dog_weight_class: str = "medium", quality: SignalQuality | None = None
+    beats: list[Beat],
+    dog_weight_class: str = "medium",
+    quality: SignalQuality | None = None,
+    start_time: datetime | None = None,
 ) -> ArrhythmiaSummary:
     """Aggregate a labeled Beat sequence into an ArrhythmiaSummary.
 
@@ -276,6 +295,9 @@ def summarize(
 
     quality: the recording's SignalQuality. Without it the duration is the
     last beat's time and nothing is excluded (the report-only path).
+
+    start_time: the recording's wall-clock start; when given, the hourly
+    rows align to clock hours.
     """
     if quality is not None:
         duration_sec, analyzed_sec, excluded = quality.duration_sec, quality.analyzed_sec, quality.excluded
@@ -334,7 +356,7 @@ def summarize(
         heart_rate_variability=heart_rate_variability(beats),
         longest_run=longest_run,
         fastest_run=fastest_run,
-        hourly=hourly_rows(beats, duration_sec, quality),
+        hourly=hourly_rows(beats, duration_sec, quality, start_time),
         duration_sec=duration_sec,
         analyzed_sec=analyzed_sec,
         excluded=excluded,

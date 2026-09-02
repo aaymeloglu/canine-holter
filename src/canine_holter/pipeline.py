@@ -73,7 +73,7 @@ def run_analysis(
     leads = rec.samples if rec.channels is None else rec.channels
     beats = exclude_beats(detect_beats(leads, rec.sample_rate), quality)
     labeled = classify_beats(beats)
-    summary = summarize(labeled, dog_weight_class=dog_weight_class, quality=quality)
+    summary = summarize(labeled, dog_weight_class=dog_weight_class, quality=quality, start_time=rec.start_time)
     return write_report(
         labeled,
         summary,

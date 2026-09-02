@@ -419,3 +419,21 @@ def test_long_pauses_count_rrs_over_five_seconds():
     s = summarize(_chain([None, 0.8, 3.0, 5.0, 5.5, 0.8]))
     assert len(s.pauses) == 3
     assert s.long_pauses == 1
+
+
+# --- clock-hour rows ----------------------------------------------------------
+from datetime import datetime  # noqa: E402
+
+
+def test_hourly_rows_align_to_clock_hours_when_the_start_is_known():
+    beats = _hours_of_beats(2.0, 0.5)  # beats at 0, 0.5, ..., 7200.0
+    rows = summarize(beats, start_time=datetime(2026, 8, 27, 10, 18, 49)).hourly
+    # 10:18:49 is 2471 s before 11:00:00.
+    assert [(r.start_sec, r.end_sec) for r in rows] == [(0.0, 2471.0), (2471.0, 6071.0), (6071.0, 7200.0)]
+    assert [r.beats for r in rows] == [4942, 7200, 2259]  # the last beat, at 7200.0, belongs to the last row
+
+
+def test_hourly_rows_from_a_start_on_the_hour_match_the_unaligned_rows():
+    beats = _hours_of_beats(1.5, 0.5)
+    aligned = summarize(beats, start_time=datetime(2026, 8, 27, 10, 0, 0)).hourly
+    assert [(r.start_sec, r.end_sec) for r in aligned] == [(r.start_sec, r.end_sec) for r in summarize(beats).hourly]
