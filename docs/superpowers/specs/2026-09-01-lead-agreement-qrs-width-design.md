@@ -143,4 +143,28 @@ selection was meant to address.
 
 ## Acceptance
 
-Filled in from the full recordings after implementation.
+Full recordings, large-dog thresholds, every flagged beat read on
+three-lead strips with each lead's own detections marked.
+
+| | 2026-08-25 DR200, channel 0 before | after (all leads) | 2026-08-27 DR400, channel 0 before | after (all leads) |
+|---|---|---|---|---|
+| PVCs flagged | 20 | 7 | 10 | 7 |
+| of which real | 5 | 4 | 1 | 4 |
+| real PVCs kept | | 01:01:54, 06:08:05, 11:36:41, 16:15:51 | | 16:07:03, and newly 13:46:36, 21:09:49, 07:09:32 |
+| real PVC lost | | 08:45:58, inside heavy exercise noise on all leads | | none |
+| false flags left | 15 | 08:30:36 and 11:36:33 (noise), 12:25:24 (a taller beat in a fast run, doubtful) | 9 | 11:42:28 and 11:42:29 (a T wave channels 1 and 2 both detect), 12:37:30 (noise) |
+| longest pause | 6.77 s | 5.21 s at 03:07:36 | 111 s | 4.73 s at 06:35:47 |
+| slowest 5-beat median | | 23 bpm | 5 bpm | 21 bpm |
+| beats | 86,125 | 86,246 | 82,467 | 84,562 |
+
+The channel-1 midnight cluster (36 flags in 23:55-00:13 on the
+channel-1 report) is gone: on all leads that hour has no PVC. The
+2026-08-27 recording's three newly found PVCs were missed before because
+channel 0 was the weak lead at those hours; all three are wide and
+differently shaped on every lead.
+
+Two regressions appeared during acceptance and were fixed before
+merging: an 8.3 s pause at 23:59:45 from the 100 ms tolerance (above),
+and four beats with 0.16-0.19 s RR intervals, each one QRS split in two
+by first-event anchoring in `_clusters`. Detection on three leads takes
+9 s for 24 h at 180 Hz.
