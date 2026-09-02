@@ -17,18 +17,12 @@ from tests.native_flash_factory import data_block, metadata_block
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
-# Ground truth for tests/fixtures/mitdb_119/119 (from wfdb .atr annotations):
-# 19 known PVC ('V') beats out of ~65 total detected beats. See
-# test_mitbih_validation.py, which independently requires >= 50% sensitivity
-# (i.e. >= 10 of 19) on this same detect -> classify path. These bounds are
-# intentionally looser than the exact 18/65 currently observed, so pipeline
-# tests don't fail on classifier retuning, while still catching a pipeline
-# that runs "successfully" but produces empty/garbage output (e.g. 0 beats,
-# 0 PVCs, or a report with no numbers at all).
+# mitdb_119 has 19 annotated PVCs among ~65 beats; the bounds are loose so
+# retuning does not break them, but empty or garbage output does.
 MIN_EXPECTED_TOTAL_BEATS = 40
 MAX_EXPECTED_TOTAL_BEATS = 90
-MIN_EXPECTED_PVC_COUNT = 10  # matches the >= 50% sensitivity floor elsewhere
-MAX_EXPECTED_PVC_COUNT = 19  # can't exceed ground truth PVC count
+MIN_EXPECTED_PVC_COUNT = 10
+MAX_EXPECTED_PVC_COUNT = 19
 
 
 def test_run_analysis_produces_report_from_fixture():
@@ -41,12 +35,8 @@ def test_run_analysis_produces_report_from_fixture():
 
 
 def test_report_contains_plausible_stats_for_known_fixture():
-    """Guards against a regression where the stages run end-to-end without
-    error but silently produce garbage or empty stats (e.g. an ingest bug
-    that yields zero beats, or a wiring bug that passes the wrong beats into
-    summarize/build_content). run_analysis excludes the first and last
-    minute of every recording and this fixture is 60 s, so the check runs
-    one stage below it, on the same detect -> classify -> summarize path."""
+    """run_analysis excludes the first and last minute and this fixture is
+    60 s, so the check runs one stage below it."""
     rec = load_recording(os.path.join(FIXTURES_DIR, "mitdb_119", "119"))
     labeled = classify_beats(detect_beats(rec.samples, rec.sample_rate))
     content = build_content(labeled, summarize(labeled), rec.start_time)

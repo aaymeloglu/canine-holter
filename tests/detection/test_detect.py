@@ -11,18 +11,12 @@ def test_detects_beats_in_mitbih_fixture():
         os.path.join(FIXTURES_DIR, "mitdb_119", "119"), source="mitdb_119"
     )
     beats = detect_beats(rec.samples, rec.sample_rate)
-    # 60s at a resting ~75bpm should be roughly 60-90 beats; a wide sanity
-    # range avoids a brittle exact-count assertion
-    assert 50 <= len(beats) <= 100
-    assert beats[0].rr_interval is None  # first beat has no prior beat
+    assert 50 <= len(beats) <= 100  # 60 s at a resting ~75 bpm
+    assert beats[0].rr_interval is None
     assert all(b.rr_interval is not None for b in beats[1:])
-    assert all(b.label is None for b in beats)  # not classified yet
-    # The energy-envelope QRS width measurement (replacing NeuroKit2's wave
-    # delineation, which returned NaN for 19/19 ground-truth PVC beats in
-    # this same fixture) should succeed for nearly every beat, not just
-    # "at least one" - confirmed 65/65 (100%) on this fixture; 90% leaves
-    # slack for incidental edge-of-recording beats without masking a
-    # regression back toward the old near-total-failure behavior.
+    assert all(b.label is None for b in beats)
+    # Width must be measurable for nearly every beat, including the PVCs
+    # NeuroKit's delineation gave up on.
     non_none = sum(1 for b in beats if b.qrs_duration is not None)
     assert non_none / len(beats) >= 0.9, (
         f"only {non_none}/{len(beats)} beats had a non-None qrs_duration"
@@ -35,19 +29,12 @@ def test_detects_beats_in_canine_fixture():
     )
     beats = detect_beats(rec.samples, rec.sample_rate)
     assert len(beats) > 0
-    assert beats[0].rr_interval is None  # first beat has no prior beat
+    assert beats[0].rr_interval is None
     assert all(b.rr_interval is not None for b in beats[1:])
-    assert all(b.label is None for b in beats)  # not classified yet
 
 
 def test_returns_empty_list_for_flat_signal():
-    # A flat/constant signal has no meaningful gradient for NeuroKit2's
-    # R-peak detector to key off of, so it reliably yields zero R-peaks -
-    # confirmed via a scratch run (0 peaks for 1000 zero samples at 360Hz),
-    # exercising the len(r_peaks) < 2 early-return branch.
-    flat_signal = np.zeros(1000)
-    beats = detect_beats(flat_signal, sample_rate=360.0)
-    assert beats == []
+    assert detect_beats(np.zeros(1000), sample_rate=360.0) == []
 
 
 def _gaussian_pulse(t, center, sigma, amplitude=2.0):
@@ -55,12 +42,8 @@ def _gaussian_pulse(t, center, sigma, amplitude=2.0):
 
 
 def test_wide_synthetic_beat_measures_wider_than_narrow_synthetic_beat():
-    # Build a deterministic synthetic signal: a narrow Gaussian "QRS" pulse
-    # (sigma=8ms, roughly a normal QRS) followed by a wide one (sigma=40ms,
-    # roughly a PVC-like wide complex), at known sample positions. This
-    # exercises the envelope-based _qrs_width measurement directly through
-    # the public detect_beats() entry point without depending on any real
-    # ECG fixture.
+    # A narrow Gaussian pulse (sigma 8 ms, a normal QRS) then a wide one
+    # (sigma 40 ms, a ventricular complex).
     sample_rate = 500.0
     duration_sec = 4.0
     n = int(duration_sec * sample_rate)
@@ -79,12 +62,9 @@ def test_wide_synthetic_beat_measures_wider_than_narrow_synthetic_beat():
 
 
 def test_qrs_width_finds_onset_at_clamped_search_window_start():
-    # Regression test for an off-by-one where the backward (onset) scan used
-    # range(r_peak, lo, -1), which never evaluates envelope[lo] - invisible
-    # unless the true threshold crossing sits exactly at the clamped window
-    # boundary (lo=0, i.e. an R-peak within the search window of sample 0).
-    # envelope[0] is the only sample below threshold on the onset side;
-    # a scan that skips index 0 finds no onset and wrongly returns None.
+    # The only sub-threshold sample on the onset side is envelope[0], at
+    # the clamped edge of the search window; the backward scan must
+    # reach it.
     sample_rate = 500.0
     envelope = np.array([0.5, 5.0, 10.0, 0.5, 0.5])
     r_peak = 2
@@ -98,27 +78,17 @@ def test_qrs_width_finds_onset_at_clamped_search_window_start():
 
 
 def test_qrs_width_returns_none_for_zero_energy_peak():
-    # An R-peak sitting on a flat (zero-energy) stretch of the envelope has no
-    # measurable width, so the threshold is meaningless and width is undefined.
     envelope = np.zeros(50)
     assert _qrs_width(envelope, r_peak=25, search_half=20, sample_rate=180.0) is None
 
 
 def test_qrs_width_returns_none_when_envelope_never_drops_below_threshold():
-    # A monotonically rising envelope that stays above the threshold on both
-    # sides of the peak within the search window yields no onset/offset
-    # crossing, so no width can be measured.
     envelope = np.arange(1, 51, dtype=float)
     r_peak = 49  # the peak is the maximum; nothing to its right, left stays high
     assert _qrs_width(envelope, r_peak=r_peak, search_half=3, sample_rate=180.0) is None
 
 
 # --- phantom-beat rejection ---------------------------------------------------
-# Teeny's first recording (2026-08-23) had 54 of 59 "PVCs" sitting on flat
-# baseline: 0.03-0.11 mV peak-to-peak at the flagged instant vs ~2.9 mV for
-# a real R-wave. The R-peak detector invents beats inside long RR gaps at
-# slow resting rates, and those phantoms cascade into false PVCs. Peaks
-# far below the recording's own median R amplitude are dropped.
 from canine_holter.detection.detect import _reject_low_amplitude_peaks
 
 
@@ -157,10 +127,9 @@ def test_reject_keeps_a_genuinely_smaller_but_real_beat():
 
 
 def test_reject_keeps_a_negative_qrs_beat_whose_peak_sits_on_its_small_r_wave():
-    # Teeny's 2026-08-25 recording: lying down, the analysis lead's QRS is a
-    # small positive r then a deep S ~80 ms later. NeuroKit puts the peak on
-    # the r, and a +/-60 ms window never reaches the S, so 552 of the
-    # report's 1209 "pauses" (13.04 s longest) were real beats thrown away.
+    # Lying down, a lead shows a small positive r then a deep S ~80 ms
+    # later, and NeuroKit peaks on the r: the amplitude window must reach
+    # the S.
     sr = 180.0
     peaks = np.array([200, 400, 600, 800])
     sig = _pulse_signal(sr, peaks, [2.0, 2.0, 0.25, 2.0], 1000)
@@ -196,10 +165,6 @@ def test_detect_beats_reports_gap_as_one_long_rr_after_dropping_phantom(monkeypa
 
 
 # --- rate-gated search-back ---------------------------------------------------
-# NeuroKit's threshold rises with beat density until it sits on the QRS at
-# ~150 bpm and misses beats in fragments; the classifier then reads normal
-# beats against an inflated RR baseline as a "VT run". A gap of more than
-# 1.5x the local RR in fast rhythm is a missed beat, never sinus arrhythmia.
 from canine_holter.detection.detect import fill_fast_gaps
 
 
@@ -255,13 +220,6 @@ def test_fill_fast_gaps_keeps_one_candidate_per_refractory_period():
 
 
 # --- interpolated T-wave rejection --------------------------------------------
-# Lying down, Teeny's analysis lead shows the QRS as a ~0.3 mV spike and the
-# T wave as a ~0.7 mV trough 0.2-0.35 s later; past NeuroKit's 300 ms minimum
-# spacing the T wave is detected as a second beat, early and "wide", and
-# labelled V (38 in one hour of the 2026-08-25 report). The gradient feature
-# cannot tell them apart - the broad T scores higher than the tiny spike -
-# but timing can: removing a T-wave detection leaves the rhythm undisturbed,
-# while a PVC that early resets it or is followed by a compensatory pause.
 from canine_holter.detection.detect import drop_interpolated_t_waves
 
 
@@ -327,10 +285,6 @@ def test_drop_interpolated_t_waves_needs_a_rhythm_history_first():
 
 
 # --- QRS width above the noise floor ------------------------------------------
-# Hash noise keeps the derivative-energy envelope above 10% of its peak, so
-# the width crossing lands on the noise, not the QRS edge: 62 of 93 "PVCs"
-# on Teeny's 2026-08-25 report were normal beats 3-5 samples "wider" than
-# baseline. The threshold now also clears the local noise floor.
 from canine_holter.detection.detect import _qrs_energy_envelope
 
 
@@ -363,9 +317,8 @@ def test_qrs_width_is_none_for_a_beat_buried_in_noise():
 
 
 def test_drop_interpolated_t_waves_acts_in_a_moderate_rhythm_under_100_bpm():
-    # 0.7 s rhythm (86 bpm): the T wave still lands 0.3 s after the QRS, past
-    # NeuroKit's 300 ms minimum spacing. 18 of the 93 "PVCs" on Teeny's
-    # 2026-08-25 report were T waves in a 0.75-0.85 s rhythm.
+    # 0.7 s rhythm (86 bpm): the T wave still lands 0.3 s after the QRS,
+    # past NeuroKit's 300 ms minimum spacing.
     sr = 100.0
     beats = [t * 0.7 for t in range(10)]
     with_t = sorted(beats + [3.5 + 0.3])
