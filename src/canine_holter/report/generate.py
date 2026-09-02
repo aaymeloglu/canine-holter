@@ -42,11 +42,8 @@ EXTREMES_TITLE = "Heart-rate extremes, longest pause, fastest run"
 EVENTS_TITLE = "Flagged events (couplets, triplets, VT runs)"
 ISOLATED_TITLE = "Isolated PVCs"
 ESCAPE_TITLE = "Ventricular escape beats"
-ESCAPE_SIGNIFICANCE = (
-    "An escape beat is the ventricle stepping in after a long gap, so the gap is the finding (see the"
-    " pauses), not the beat. Several in a row at a slow rate are an idioventricular rhythm, worth a"
-    " cardiologist's look."
-)
+# One line: a strip's caption has room for two lines of "what" and one of significance.
+ESCAPE_SIGNIFICANCE = "The gap is the finding (see the pauses), not the beat; several in a row need a cardiologist's look."
 HOURLY_TITLE = "One strip per hour"
 MAX_HOURLY_STRIPS = 48  # two days of hours; stated in the heading when it applies
 HOURLY_HEADER = [

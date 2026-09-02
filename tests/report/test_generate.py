@@ -478,7 +478,8 @@ def test_escape_section_comes_after_isolated_pvcs_and_before_the_hourly_strips()
         "The marked beat arrived 2.00 s after the beat before it (typical here 0.80 s) and its QRS lasts"
         " 0.14 s (typical 0.08 s): wide and late is what makes it a ventricular escape beat."
     )
-    assert "gap" in item.caption.significance and "idioventricular" in item.caption.significance
+    assert "gap" in item.caption.significance and "cardiologist" in item.caption.significance
+    assert len(item.caption.significance) <= 105  # one caption line; a third line pushes the strip into the next slot
     assert item.caption.status is None
 
 
