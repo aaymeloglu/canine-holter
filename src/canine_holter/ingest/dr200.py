@@ -1,4 +1,4 @@
-"""Load native and vendor-extracted NorthEast Monitoring DR200 recordings."""
+"""Load native NorthEast Monitoring DR200/DR400 ``flash.dat`` recordings."""
 
 import struct
 from datetime import datetime
@@ -62,52 +62,6 @@ def _replace_pacemaker_markers(samples: np.ndarray) -> np.ndarray:
         marker_indices, sample_indices, result[sample_indices]
     )
     return result
-
-
-def load_decoded_channel(
-    path: str | Path,
-    *,
-    source: str | None = None,
-    sample_rate: float = DR200_SAMPLE_RATE,
-    start_time: datetime | None = None,
-) -> Recording:
-    """Load a vendor-extracted DR200 ``flashcN.dat``/``.raw`` channel.
-
-    ``sample_rate`` is configurable for explicitly converted research files,
-    but defaults to the 180 Hz rate documented for DR200 three-channel output.
-    Native SD-card ``flash.dat`` files must be loaded with
-    :func:`load_native_flash` rather than interpreted as raw int16 data.
-    """
-    channel_path = Path(path)
-    if channel_path.name.casefold() == "flash.dat":
-        raise NativeDR200FormatError(
-            "flash.dat is a native DR200 recording, not a decoded channel; "
-            "use load_native_flash()"
-        )
-    if sample_rate <= 0:
-        raise ValueError("sample_rate must be positive")
-
-    try:
-        size = channel_path.stat().st_size
-    except FileNotFoundError:
-        raise FileNotFoundError(f"DR200 channel file not found: {channel_path}") from None
-    if size == 0:
-        raise ValueError(f"DR200 channel file is empty: {channel_path}")
-    if size % np.dtype("<i2").itemsize:
-        raise ValueError(
-            f"DR200 channel file has an incomplete 16-bit sample ({size} bytes): {channel_path}"
-        )
-
-    counts = np.fromfile(channel_path, dtype="<i2")
-    reconstructed = _replace_pacemaker_markers(counts)
-    samples_mv = reconstructed.astype(np.float64, copy=False) * DR200_MILLIVOLTS_PER_COUNT
-
-    return Recording(
-        samples=samples_mv,
-        sample_rate=float(sample_rate),
-        start_time=start_time,
-        source=source if source is not None else str(channel_path),
-    )
 
 
 def _parse_metadata(block: bytes) -> dict[str, str]:

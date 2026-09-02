@@ -4,64 +4,13 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from canine_holter.ingest.dr200 import (
-    DR200_SAMPLE_RATE,
-    NativeDR200FormatError,
-    load_decoded_channel,
-    load_native_flash,
-)
+from canine_holter.ingest.dr200 import NativeDR200FormatError, load_native_flash
 from tests.native_flash_factory import (
     data_block,
     finish_block,
     metadata_block,
     write_native_flash,
 )
-
-
-def test_loads_little_endian_counts_and_scales_to_millivolts(tmp_path):
-    path = tmp_path / "flashc0.dat"
-    path.write_bytes(struct.pack("<hhhh", 0, 80, -80, 160))
-
-    rec = load_decoded_channel(path, source="test-channel")
-
-    assert rec.sample_rate == DR200_SAMPLE_RATE
-    assert rec.start_time is None
-    assert rec.source == "test-channel"
-    np.testing.assert_allclose(rec.samples, [0.0, 1.0, -1.0, 2.0])
-
-
-def test_interpolates_pacemaker_marker_instead_of_emitting_voltage_spike(tmp_path):
-    path = tmp_path / "flashc1.dat"
-    path.write_bytes(struct.pack("<hhh", 0, -32768, 160))
-
-    rec = load_decoded_channel(path)
-
-    np.testing.assert_allclose(rec.samples, [0.0, 1.0, 2.0])
-
-
-def test_rejects_native_flash_dat_with_actionable_error(tmp_path):
-    path = tmp_path / "flash.dat"
-    path.write_bytes(b"not decoded channel data")
-
-    with pytest.raises(NativeDR200FormatError, match="load_native_flash"):
-        load_decoded_channel(path)
-
-
-@pytest.mark.parametrize("contents", [b"", b"\x00"])
-def test_rejects_empty_or_incomplete_channel(tmp_path, contents):
-    path = tmp_path / "flashc2.dat"
-    path.write_bytes(contents)
-
-    with pytest.raises(ValueError):
-        load_decoded_channel(path)
-
-
-def test_rejects_non_positive_sample_rate(tmp_path):
-    path = tmp_path / "channel.raw"
-    path.write_bytes(struct.pack("<h", 0))
-
-    with pytest.raises(ValueError, match="sample_rate must be positive"):
-        load_decoded_channel(path, sample_rate=0)
 
 
 def test_loads_native_flash_delta_encoding_and_metadata(tmp_path):
@@ -239,30 +188,9 @@ def test_native_flash_rejects_misaligned_pacemaker_marker(tmp_path):
         load_native_flash(path)
 
 
-def test_decoded_channel_all_pacemaker_markers_raises(tmp_path):
-    path = tmp_path / "flashc0.dat"
-    path.write_bytes(struct.pack("<hhh", -32768, -32768, -32768))
-    with pytest.raises(ValueError, match="pacemaker markers but no ECG samples"):
-        load_decoded_channel(path)
-
-
-def test_decoded_channel_interpolates_pacemaker_at_start_and_end(tmp_path):
-    # Markers at the very first and very last sample have only one neighbour,
-    # so they are held from that neighbour rather than interpolated between two.
-    path = tmp_path / "flashc0.dat"
-    path.write_bytes(struct.pack("<hhhh", -32768, 80, 160, -32768))
-    rec = load_decoded_channel(path)
-    np.testing.assert_allclose(rec.samples, [1.0, 1.0, 2.0, 2.0])
-
-
 def test_native_flash_missing_file_raises_actionable_error(tmp_path):
     with pytest.raises(FileNotFoundError, match="flash.dat not found"):
         load_native_flash(tmp_path / "nope" / "flash.dat")
-
-
-def test_decoded_channel_missing_file_raises_actionable_error(tmp_path):
-    with pytest.raises(FileNotFoundError, match="channel file not found"):
-        load_decoded_channel(tmp_path / "missing.raw")
 
 
 def test_native_flash_rejects_all_zero_file(tmp_path):

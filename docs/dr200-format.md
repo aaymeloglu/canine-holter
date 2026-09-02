@@ -70,7 +70,7 @@ Fixture fingerprints:
 | Bourke `datacard.dat` | 23,639,496 bytes | `35f392a0247ec9b27f5219f39f768c1b097ec6c4a51c34aa32e2cfb76d2fa9e3` |
 | Teeny DR400 `flash2.dat` (2026-08-27, reused card) | 408,944,640 bytes | `cd530b57783f43a791596c5c6f7479b74204c48b2a9958286a3e15db1a99ed81` |
 
-The native parser reads 15,583,040 samples from the official demo: 24.0479 hours at 180 Hz, beginning at the embedded timestamp `2010-07-08 11:12:50`. Channel 0 reconstructs to a bounded ECG signal with a range of -12.875 to 12.7375 mV. The public converted fixture contains 15,552,300 samples in each 31,104,600-byte raw channel, which also exercises the decoded-channel loader.
+The native parser reads 15,583,040 samples from the official demo: 24.0479 hours at 180 Hz, beginning at the embedded timestamp `2010-07-08 11:12:50`. Channel 0 reconstructs to a bounded ECG signal with a range of -12.875 to 12.7375 mV.
 
 ## Current limits
 
