@@ -134,7 +134,8 @@ def _lead_peaks(cleaned: np.ndarray, sample_rate: float) -> np.ndarray:
 
 def _agree(peaks_by_lead: list[np.ndarray], tolerance: int) -> np.ndarray:
     """Beats that at least MIN_AGREEING_LEADS leads (or every lead, when
-    there are fewer) detected within `tolerance` samples of each other, as
+    there are fewer) detected in a chain of peaks each within `tolerance`
+    samples of the next (see _clusters), as
     an (n_beats, n_leads) array holding each lead's own peak, or the
     agreeing leads' median position for a lead that missed the beat."""
     n_leads = len(peaks_by_lead)
@@ -148,17 +149,20 @@ def _agree(peaks_by_lead: list[np.ndarray], tolerance: int) -> np.ndarray:
 
 
 def _clusters(events: list[tuple[int, int]], tolerance: int):
-    """Group (position, lead) events, sorted by position, into runs no wider
-    than `tolerance`; each group maps lead -> its first position."""
+    """Group (position, lead) events, sorted by position, into chains whose
+    consecutive events are within `tolerance` of each other and whose
+    leads are distinct; each group maps lead -> position. Anchoring a
+    group at its first event instead split one QRS in two when the leads'
+    fiducials straddled the tolerance, and the second half read as a
+    premature wide beat 160 ms after the first."""
     cluster: dict[int, int] = {}
-    start = 0
+    last = 0
     for position, lead in events:
-        if cluster and position - start > tolerance:
+        if cluster and (position - last > tolerance or lead in cluster):
             yield cluster
             cluster = {}
-        if not cluster:
-            start = position
-        cluster.setdefault(lead, position)
+        cluster[lead] = position
+        last = position
     if cluster:
         yield cluster
 

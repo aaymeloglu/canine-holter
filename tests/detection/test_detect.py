@@ -440,3 +440,13 @@ def test_two_leads_must_both_agree():
     narrow, _, flat, fs = _three_lead_pulses()
     assert detect_beats(np.stack([narrow, flat]), fs) == []
     assert _times(detect_beats(np.stack([narrow, narrow]), fs)) == _times(detect_beats(narrow, fs))
+
+
+def test_agree_chains_fiducials_that_straddle_the_tolerance_into_one_beat():
+    # One QRS: lead B's fiducial 28 samples before A's, C's 4 after A's,
+    # then B's T wave 28 after C's. Anchored at the first event, (B, A)
+    # and (C, T) would be two beats 32 samples apart; chained, with a lead
+    # allowed once per beat, they are one beat and a lone T wave.
+    from canine_holter.detection.detect import _agree
+    rows = _agree([np.array([100]), np.array([72, 132]), np.array([104])], tolerance=30)
+    assert rows.tolist() == [[100, 72, 104]]
