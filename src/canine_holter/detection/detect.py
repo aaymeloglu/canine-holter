@@ -63,10 +63,14 @@ T_WAVE_RHYTHM_TOLERANCE = 0.25  # |A->C - reference| within this fraction of it 
 # Lead agreement. A QRS is on every lead at once, so a beat is where at
 # least MIN_AGREEING_LEADS leads detect a peak within AGREEMENT_TOLERANCE_SEC
 # of each other; one lead's T wave, P wave, or noise spike has no partner.
-# The same QRS peaks up to ~55 ms apart from lead to lead (a PVC on Teeny's
-# 2026-08-27 recording), a T wave taken for a beat sits 250-350 ms after
-# its QRS, and the shortest RR seen is 255 ms at 235 bpm.
-AGREEMENT_TOLERANCE_SEC = 0.1
+# On Teeny's 2026-08-27 recording the same QRS's fiducial lands within
+# 22 ms on the other leads for 90% of beats, but up to 140 ms apart where
+# a lead renders the QRS as a fractured wiggle (channel 1 asleep; the
+# detector settles on its onset or the P wave). A T wave taken for a beat
+# sits 250-350 ms after its QRS and the shortest RR seen is 255 ms at
+# 235 bpm, so the tolerance is half the distance to the nearest distinct
+# event.
+AGREEMENT_TOLERANCE_SEC = 0.15
 MIN_AGREEING_LEADS = 2
 
 

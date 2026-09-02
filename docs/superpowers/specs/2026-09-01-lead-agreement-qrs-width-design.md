@@ -56,12 +56,22 @@ all three leads simultaneously.
 (`(n_leads, n_samples)`). Each lead runs the existing single-lead
 pipeline on its own: NeuroKit2 R-peaks, amplitude rejection, fast-rhythm
 search-back, T-wave rejection. Then `_agree` groups the leads' peaks into
-clusters no wider than `AGREEMENT_TOLERANCE_SEC = 0.1` (the same QRS
-peaks up to ~55 ms apart from lead to lead; a T wave taken for a beat
-sits 250-350 ms after its QRS; the shortest RR seen is 255 ms at
-235 bpm) and keeps a cluster as a beat when at least
+clusters no wider than `AGREEMENT_TOLERANCE_SEC = 0.15` and keeps a
+cluster as a beat when at least
 `MIN_AGREEING_LEADS = 2` leads are in it (or every lead, when fewer are
 given). The beat's time is the median of the agreeing leads' peaks.
+
+The tolerance is half the distance to the nearest distinct event: a T
+wave taken for a beat sits 250-350 ms after its QRS and the shortest RR
+seen is 255 ms at 235 bpm. It has to be that wide because the same QRS's
+fiducial does not land at the same time on every lead. On 2026-08-27,
+channel 1's and channel 2's peaks fall within 22 ms of channel 0's for
+90 percent of beats, but where channel 1 renders the QRS as a fractured
+wiggle (asleep, around midnight) its detector settles 120-140 ms early,
+on the onset or the P wave. At 100 ms those beats had only channel 0,
+channel 2 having missed them, and 23:59:45-23:59:53 became an 8.3 s
+pause. The 100-150 ms band holds 1.9 percent of channel 1's detections
+on that recording, all of this kind.
 
 QRS width is measured on every lead **at that lead's own peak**, or at
 the consensus position for a lead that missed the beat, and the beat's
