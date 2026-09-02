@@ -8,8 +8,10 @@ from canine_holter.quality.gate import SignalQuality
 from canine_holter.report.generate import (
     EVENTS_TITLE,
     EXTREMES_TITLE,
+    HOURLY_TITLE,
     HOW_TO_READ_STRIPS,
     ISOLATED_TITLE,
+    MAX_HOURLY_STRIPS,
     SummaryRow,
     build_content,
     select_evenly,
@@ -56,20 +58,20 @@ def test_isolated_single_pvc_goes_in_its_own_section_not_flagged_events():
     live, so it gets its own section and strip."""
     beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(1.6, 0.8, "V"), _beat(2.4, 0.8, "N")]
     content = build_content(beats, summarize(beats), None)
-    assert [s.heading for s in content.sections] == [ISOLATED_TITLE]
+    assert [s.heading for s in content.sections] == [ISOLATED_TITLE, HOURLY_TITLE]
     assert [item.caption.title for item in content.sections[0].items] == ["Isolated PVC 1 · t=2s"]
     assert [[b.time for b in item.run] for item in content.sections[0].items] == [[1.6]]
 
 
 def test_flagged_events_come_before_isolated_pvcs():
     content = build_content(_couplet_and_single(), summarize(_couplet_and_single()), None)
-    assert [s.heading for s in content.sections] == [EXTREMES_TITLE, EVENTS_TITLE, ISOLATED_TITLE]
+    assert [s.heading for s in content.sections] == [EXTREMES_TITLE, EVENTS_TITLE, ISOLATED_TITLE, HOURLY_TITLE]
     assert [item.caption.title for item in content.sections[1].items] == ["Event 1 · t=2s"]
 
 
-def test_zero_pvcs_yields_no_sections():
+def test_zero_pvcs_yields_only_the_hourly_strips():
     beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(1.6, 0.8, "N")]
-    assert build_content(beats, summarize(beats), None).sections == []
+    assert [s.heading for s in build_content(beats, summarize(beats), None).sections] == [HOURLY_TITLE]
 
 
 def test_isolated_pvc_strips_are_capped_and_the_heading_says_so():
@@ -78,7 +80,7 @@ def test_isolated_pvc_strips_are_capped_and_the_heading_says_so():
         beats.append(_beat(i * 0.8, 0.8, "V" if i % 2 else "N"))
     summary = summarize(beats)
     assert summary.pvc_count == 30
-    section = build_content(beats, summary, None).sections[-1]
+    section = build_content(beats, summary, None).sections[-2]  # the hourly strips come after
     assert section.heading == "Isolated PVCs (24 of 30 shown, evenly spaced through the recording)"
     assert len(section.items) == 24
 
@@ -136,7 +138,7 @@ def test_extremes_section_comes_first_with_max_min_pause_and_fastest_run():
     # The pause strip marks both beats bracketing the gap; the run strip marks every PVC.
     assert [b.time for b in section.items[2].run] == [30.0, 33.0]
     assert [b.time for b in section.items[3].run] == [10.0, 10.25, 10.5, 10.75]
-    assert [s.heading for s in content.sections[1:]] == [EVENTS_TITLE]
+    assert [s.heading for s in content.sections[1:]] == [EVENTS_TITLE, HOURLY_TITLE]
 
 
 def test_extremes_section_omits_what_is_not_there():
@@ -147,7 +149,7 @@ def test_extremes_section_omits_what_is_not_there():
 
 def test_no_extremes_section_when_heart_rate_not_computed():
     beats = _steady(3, 0.5)
-    assert build_content(beats, summarize(beats), None).sections == []
+    assert [s.heading for s in build_content(beats, summarize(beats), None).sections] == [HOURLY_TITLE]
 
 
 HOURLY_HEADER = [
@@ -400,3 +402,37 @@ def test_heart_rate_extreme_captions_are_uncoloured_and_explain_context():
     assert "play or excitement" in captions[0].significance and captions[0].status is None
     assert captions[1].title.startswith("Slowest heart rate · t=")
     assert "sinus arrhythmia" in captions[1].significance and captions[1].status is None
+
+
+# --- one strip per hour --------------------------------------------------------
+
+
+def test_hourly_strips_come_last_one_per_hour_at_the_hours_first_beat():
+    beats = _steady(int(2.5 * 3600 / 0.5), 0.5)  # 2.5 h at 120 bpm
+    content = build_content(beats, summarize(beats, start_time=datetime(2026, 8, 27, 10, 18, 49)), datetime(2026, 8, 27, 10, 18, 49))
+    section = content.sections[-1]
+    assert section.heading == HOURLY_TITLE
+    assert [item.caption.title for item in section.items] == [
+        "Hour 10:18-11:00 · 10:18:49", "Hour 11:00-12:00 · 11:00:00", "Hour 12:00-12:48 · 12:00:00",
+    ]
+    assert [item.run[0].time for item in section.items] == [0.0, 2471.0, 6071.0]
+    assert section.items[0].caption.what == "The first beats of the hour. This hour: 120-120 bpm, mean 120."
+    assert section.items[0].caption.significance == ""
+
+
+def test_hourly_strips_skip_an_hour_without_beats_and_say_when_rates_are_missing():
+    beats = [_beat(0.0, None, "N"), _beat(1.0, 1.0, "N"), _beat(7300.0, None, "N")]
+    section = build_content(beats, summarize(beats), None).sections[-1]
+    assert [item.caption.title for item in section.items] == ["Hour 0:00-1:00 · t=0s", "Hour 2:00-2:01 · t=7300s"]
+    assert section.items[0].caption.what == "The first beats of the hour. Too few beats this hour for a rate."
+
+
+def test_hourly_strips_are_capped_and_the_heading_says_so():
+    beats = _steady(50 * 6, 600.0)  # 50 h, a beat every 10 min
+    section = build_content(beats, summarize(beats), None).sections[-1]
+    assert len(section.items) == MAX_HOURLY_STRIPS
+    assert section.heading == f"{HOURLY_TITLE} ({MAX_HOURLY_STRIPS} of 50 shown, evenly spaced through the recording)"
+
+
+def test_primer_explains_the_hourly_strips():
+    assert any("every hour" in line for line in HOW_TO_READ_STRIPS)

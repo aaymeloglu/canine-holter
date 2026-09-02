@@ -48,10 +48,11 @@ def _write(n_runs, samples=True):
 
 
 # Every report with a waveform has a summary page, a timeline page, the
-# strip primer, and an extremes strip page (fastest/slowest heart rate);
-# event sections add pages after those, two strips per page.
-_BASE_PAGES = 4
-_BASE_PAGES_TEXT = 3  # no waveform: no primer, and the extremes are one text page
+# strip primer, an extremes strip page (fastest/slowest heart rate), and the
+# one-strip-per-hour page (these fixtures are under an hour: one strip);
+# event sections add pages before the hourly one, two strips per page.
+_BASE_PAGES = 5
+_BASE_PAGES_TEXT = 4  # no waveform: no primer, and the extremes and hourly sections are one text page each
 
 
 def test_no_flagged_events_is_summary_timeline_primer_and_extremes():
@@ -127,12 +128,17 @@ def _write_hours(hours):
         return _page_count(out)
 
 
+# A day-long recording's hourly strips: 25 strips on 13 pages replace the one-strip page of the base count.
+_HOURLY_STRIP_PAGES_24H = 13 - 1
+
+
 def test_hourly_table_shares_the_timeline_page_for_a_day_long_recording():
-    assert _write_hours(24.5) == _BASE_PAGES  # 25 rows fit under the timeline
+    assert _write_hours(24.5) == _BASE_PAGES + _HOURLY_STRIP_PAGES_24H  # 25 rows fit under the timeline
 
 
 def test_hourly_table_spills_to_its_own_page_past_the_first_page_rows():
-    assert _write_hours(26.5) == _BASE_PAGES + 1  # 27 rows: 26 under the timeline, 1 on a new page
+    # 27 rows: 26 under the timeline, 1 on a new page; 27 strips on 14 pages
+    assert _write_hours(26.5) == _BASE_PAGES + 1 + (14 - 1)
 
 
 def test_summary_page_renders_groups_with_status_colors_and_footer():
