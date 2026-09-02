@@ -1,28 +1,31 @@
-# QRS width by lead agreement
+# Beats and QRS width by lead agreement
 
 **Date:** 2026-09-01
-**Status:** approved design.
+**Status:** approved design, revised during implementation (see "What
+changed while building").
 
 ## Problem
 
-A PVC is a beat that starts in the ventricle, so its shape differs from
-the sinus beat on every lead at once. Our classifier measures QRS width
-on one lead, and Teeny's leads take turns being unreliable as she changes
-posture:
+A QRS is on every lead at once, and a PVC is a beat that starts in the
+ventricle, so its shape differs from the sinus beat on every lead at
+once. The detector measured one lead, and Teeny's leads take turns being
+unreliable as she changes posture:
 
 - On the 2026-08-27 DR400 recording analyzed on channel 1, 36 of 47
-  "PVCs" sit in 23:55-00:13. There channel 1 shows each QRS as a small
-  fractured biphasic wiggle that the energy envelope measures at 90-130 ms
-  against a 60 ms baseline, while channels 0 and 2 show the same beats as
-  identical, narrow, 2 mV complexes. "Premature" is her sleeping sinus
-  arrhythmia (alternating ~0.9 s and ~1.5 s intervals). Early plus wide on
-  one lead is a PVC by the current rule; on the other two leads the beat
-  is plainly normal.
-- Channel 0, the lead the app analyzes, is the weak lead from 14:00 to
+  "PVCs" sit in 23:55-00:13. Asleep, with sinus arrhythmia alternating
+  ~0.9 s and ~1.5 s intervals, channel 1 shows each QRS as a small
+  fractured wiggle and the T wave 0.3 s later as the larger deflection;
+  the detector takes the T wave for a beat, early by the rolling baseline
+  and wide (a T wave is broad on every lead). Channels 0 and 2 show the
+  QRS as identical narrow 2 mV complexes and detect no beat at the T.
+- Channel 0, the lead the app analyzed, is the weak lead from 14:00 to
   20:00 on the same recording (0.55 mV median peak-to-peak vs 3.2 mV on
-  channel 1) and the strong lead at midnight. Choosing one channel for
-  the recording only moves the errors: the channel-0 report has 10 PVCs
-  and a false 111 s pause, the channel-1 report 47 PVCs and no such pause.
+  channel 1) and the strong lead at midnight. Choosing one channel only
+  moves the errors: the channel-0 report has 10 PVCs and a false 111 s
+  pause, the channel-1 report 47 PVCs and no such pause.
+- The `lying_t` fixture from 2026-08-25 (0.77 sensitivity, 0.67
+  precision on channel 0: P waves and T waves detected, the notch-sized
+  QRS missed) was the pending acceptance case for multi-lead detection.
 
 The six beats on the two real recordings that a careful eye calls PVCs
 (2026-08-25 at 01:01:54, 06:08:05, 08:45:58, 11:36:41, 16:15:51;
@@ -31,86 +34,103 @@ all three leads simultaneously.
 
 ## Goals
 
-1. A beat is wide only when it is wide on at least two of the three
-   leads, so one unreliable lead can neither create a PVC nor hide one.
-2. Keep every one of the six real PVCs above flagged.
-3. Keep the code small: no new classifier state, no change to `Beat`.
+1. A beat exists only where at least two of the three leads detect it,
+   and is wide only when at least two leads measure it wide, so one
+   unreliable lead can neither invent a beat or a PVC nor hide one.
+2. Keep every one of the six real PVCs flagged.
+3. Keep the code small: no new classifier state, no change to `Beat`,
+   no channel option in the CLI or GUI.
 
 ## Non-goals
 
-- The other false PVCs on channel 0 of both recordings: motion-noise
-  bursts (08:30, 11:36:33, 14:03, 19:53 on 08-25; 12:05, 14:15, 15:24,
-  19:01, 07:13 on 08-27) and T waves detected as beats in the lying
-  posture (12:17, 13:01, 14:50, 15:12-15:15, 19:17 on 08-25). Those are
-  wide on every lead because the "beat" is not a QRS on any lead; they are
-  detection problems, and this rule does not claim to fix them.
-- Multi-lead R-peak detection (the lying-down phantom pauses). The beat
-  times still come from the analysis lead.
-- Single-lead inputs (WFDB records) are unchanged.
+- False PVCs that every lead agrees on: motion-noise bursts, and a T wave
+  every lead detects as a beat. Agreement cannot remove what all leads
+  see. Single-lead inputs (WFDB records) are unchanged.
+- Quality gating still judges `samples` (channel 0).
 
 ## Design
 
 ### Detection (`detection/detect.py`)
 
-`detect_beats(samples, sample_rate, channels=None)`. R-peak detection,
-amplitude rejection, gap fill, and T-wave rejection run on `samples` as
-before. QRS width is then measured on every row of `channels` and each
-beat's `qrs_duration` is the **median of the per-lead widths**, ignoring
-leads that return no width. With three leads the median exceeds a
-threshold exactly when at least two leads do, so the classifier's
-existing width test becomes the two-of-three agreement rule with no
-change to `classify_beats`, `Beat`, or the report. With `channels=None`
-the width comes from `samples` alone, as today.
+`detect_beats(leads, sample_rate)` takes one lead (1-D) or all leads
+(`(n_leads, n_samples)`). Each lead runs the existing single-lead
+pipeline on its own: NeuroKit2 R-peaks, amplitude rejection, fast-rhythm
+search-back, T-wave rejection. Then `_agree` groups the leads' peaks into
+clusters no wider than `AGREEMENT_TOLERANCE_SEC = 0.1` (the same QRS
+peaks up to ~55 ms apart from lead to lead; a T wave taken for a beat
+sits 250-350 ms after its QRS; the shortest RR seen is 255 ms at
+235 bpm) and keeps a cluster as a beat when at least
+`MIN_AGREEING_LEADS = 2` leads are in it (or every lead, when fewer are
+given). The beat's time is the median of the agreeing leads' peaks.
 
-On each lead the width is measured at that lead's own energy-envelope
-peak within `FIDUCIAL_HALF_SEC` (50 ms) of the analysis lead's R-peak,
-because the steepest slope of the same QRS falls a few samples apart from
-lead to lead and `_qrs_width` needs the envelope's local maximum.
+QRS width is measured on every lead **at that lead's own peak**, or at
+the consensus position for a lead that missed the beat, and the beat's
+`qrs_duration` is the median of the per-lead widths, ignoring leads that
+return none. With three leads the median exceeds a threshold exactly
+when at least two leads do, so the classifier's existing width test
+becomes the two-of-three rule with no change to `classify_beats`, `Beat`,
+or the report. Measuring at each lead's own peak matters: the 16:07:03
+PVC peaks 50 ms later on channels 1 and 2 than on channel 0, and
+measured at the consensus position it read 72-94 ms instead of
+106-128 ms and was lost.
 
-The recording-wide baseline in the classifier is then the median of
-per-beat medians. A lead whose normal QRS measures systematically wider
-(the fractured channel-1 morphology) is outvoted beat by beat, which is
-what a per-lead baseline would have achieved with three times the state.
+### Pipeline and contracts
+
+`run_analysis` passes `rec.channels` when present, else `rec.samples`.
+`Recording.samples` is the lead quality gating judges and, for a
+single-lead input, the lead beats are detected on; `channels` is every
+lead, detected on together and drawn by the report. CLAUDE.md's data
+contract says the same.
+
+### What changed while building
+
+The approved design measured width on every lead at the analysis lead's
+R-peak and left detection single-lead. Two measurements overturned it:
+
+- The midnight cluster is T-wave detections, not width: their widths are
+  90-156 ms on all three leads. Width agreement alone left the channel-1
+  midnight flags in place and, because the shared baseline became the
+  narrow channel-0/2 width, raised the channel-1 count from 47 to 130.
+- The 16:07:03 PVC was lost when widths were measured at one shared
+  position (above).
+
+Detection-level agreement is the same principle applied one stage
+earlier, and it also resolves the lying-down misses that channel
+selection was meant to address.
 
 ### Rejected alternatives
 
 - **Width from the lead with the largest QRS for that beat.** Amplitude is
-  the property that misleads us: channel 1 at midnight is not small, it
-  is fractured. A strongest-lead pick can land on it.
+  the property that misleads us; a strongest-lead pick can land on a
+  fractured lead.
 - **Narrowest width across leads.** A real PVC can read narrow on a lead
-  where it is nearly isoelectric and the envelope has nothing to measure.
+  where it is nearly isoelectric.
 - **Per-lead baselines in the classifier.** Same decision as the median
-  against the shared baseline, but `Beat` would carry three widths and the
-  classifier three baselines.
-
-### Pipeline and contracts
-
-`run_analysis` passes `rec.channels` to `detect_beats`. `Recording`'s
-docstring and CLAUDE.md's data contract change from "only the report
-reads channels" to: R-peak detection, quality, and classification consume
-`samples`; QRS width is measured on every channel; strips display them.
+  against the shared baseline, with three times the state.
+- **A channel option in the CLI/GUI.** The best lead changes with
+  posture within one recording.
 
 ## Testing
 
-- Unit (`tests/detection/test_detect.py`), synthetic three-lead signals:
-  a beat wide on the analysis lead and narrow on the other two gets the
-  narrow width; a lead with no measurable width is ignored; all leads
-  unmeasurable gives `None`; a lead whose QRS peaks 30 ms after the
-  analysis lead's R-peak is measured at its own peak; `channels=None`
-  reproduces the single-lead width.
-- Fixtures (`tests/fixtures/teeny_2026-08-27/`, cut by
-  `scripts/extract_teeny_fixtures.py`, three channels, with `pvc_times`):
-  `midnight` (00:03:00 +40 s, no PVCs; analyzed on channel 1, the old
-  path flags several and the agreement path flags none) and `pvc`
-  (16:07:03 -8 s, +12 s, one PVC). From 2026-08-25, `pvc_run_end`
-  (11:36:41 -8 s, +12 s, one PVC after a run of small beats). The
-  classification test runs detection with channels and asserts the V
-  beats match `pvc_times` within 150 ms, exactly.
-- Acceptance on the full recordings, channel 0 and channel 1: all six
-  real PVCs remain flagged; the channel-1 midnight hour drops from 36 to
-  0; every other change in the PVC lists is inspected on three-lead
-  strips and recorded in this spec's acceptance table.
+- Unit (`tests/detection/test_detect.py`), synthetic three-lead Gaussian
+  pulses at 500 Hz: the width is the median of the leads (wide on one,
+  narrow on two, and the reverse); a beat on one lead only is not a beat;
+  a beat on two of three is, with the width from both; a lead whose QRS
+  peaks 40 ms later is measured at its own peak and the beat time is the
+  median; peaks 300 ms apart are different beats; two leads must both
+  agree.
+- Fixtures cut by `scripts/extract_teeny_fixtures.py` (three channels,
+  `beat_times` for detection windows, `pvc_times` for classification
+  windows). `tests/detection/test_teeny_fixtures.py` keeps the single-lead
+  thresholds and adds an all-leads variant: tachy >= 0.95/1.00, lying,
+  lying_t, quiet 1.00/1.00. `tests/classify/test_teeny_fixtures.py` runs
+  detection on all leads and classification and requires the V beats to
+  match `pvc_times` within 150 ms, exactly: `teeny_2026-08-27/midnight`
+  (00:03:00 +40 s, none), `teeny_2026-08-27/pvc` (16:06:55 +20 s, one at
+  8.17 s), `teeny_2026-08-25/pvc_run_end` (11:36:33 +20 s, one at 8.27 s).
+- The pipeline's synthetic native flash carries its spike train on two
+  channels, since a beat needs two leads.
 
 ## Acceptance
 
-Filled in after implementation.
+Filled in from the full recordings after implementation.
