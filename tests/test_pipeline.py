@@ -12,6 +12,7 @@ from canine_holter.detection.detect import detect_beats
 from canine_holter.ingest.loader import load_recording
 from canine_holter.pipeline import parse_start_time, run_analysis
 from canine_holter.report.generate import build_content
+from canine_holter.types import Recording
 from tests.native_flash_factory import data_block, metadata_block
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -117,6 +118,25 @@ def test_run_analysis_excludes_a_recording_shorter_than_the_edge_minutes(tmp_pat
     content = report_text()
     assert re.search(r"Analyzed:\s*0h 0m \(0%\)", content), content
     assert re.search(r"Total beats:\s*0\b", content), content
+
+
+def test_run_analysis_trims_an_off_body_tail_before_detection(tmp_path, report_text, monkeypatch):
+    fs = 100.0
+    t = np.arange(0, 3600, 1 / fs)
+    ecg = np.sin(2 * np.pi * 1.5 * t)
+    tone = 0.5 * np.where(np.arange(int(7200 * fs)) % 2 == 0, 1.0, -1.0)
+    rec = Recording(samples=np.concatenate([ecg, tone]), sample_rate=fs, start_time=None, source="synthetic")
+    seen = {}
+    monkeypatch.setattr("canine_holter.pipeline.load_recording", lambda _: rec)
+    monkeypatch.setattr(
+        "canine_holter.pipeline.detect_beats",
+        lambda samples, rate: seen.setdefault("n", len(samples)) and detect_beats(samples, rate),
+    )
+    run_analysis("ignored", str(tmp_path / "out"))
+    assert seen["n"] == 360000
+    content = report_text()
+    assert re.search(r"Duration:\s*1h 0m", content), content
+    assert "2h 0m off-body tail trimmed" in content, content
 
 
 # --- start-time override -----------------------------------------------------

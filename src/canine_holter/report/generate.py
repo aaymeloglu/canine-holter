@@ -137,12 +137,23 @@ def _hourly_rows(summary: ArrhythmiaSummary, start_time: datetime | None) -> lis
     ]
 
 
+def _duration_row(summary: ArrhythmiaSummary) -> SummaryRow:
+    if summary.trimmed_sec <= 0:
+        return SummaryRow("Duration", format_duration(summary.duration_sec))
+    ran = format_duration(summary.duration_sec + summary.trimmed_sec)
+    return SummaryRow(
+        "Duration",
+        format_duration(summary.duration_sec),
+        f"recorder ran {ran}; {format_duration(summary.trimmed_sec)} off-body tail trimmed",
+    )
+
+
 def _recording_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> SummaryGroup:
     duration, analyzed = summary.duration_sec, summary.analyzed_sec
     pct = 100.0 * analyzed / duration if duration else 0.0
     return SummaryGroup("Recording", [
         SummaryRow("Start", start_time.strftime("%Y-%m-%d %H:%M:%S") if start_time else "unknown"),
-        SummaryRow("Duration", format_duration(duration)),
+        _duration_row(summary),
         SummaryRow("Analyzed", f"{format_duration(analyzed)} ({pct:.0f}%)", ANALYZED_BAND, analyzed_status(analyzed)),
         SummaryRow("Excluded", format_duration(duration - analyzed), "artifact / off-body"),
         SummaryRow("Total beats", str(summary.total_beats)),

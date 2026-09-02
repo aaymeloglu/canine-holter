@@ -53,8 +53,9 @@ def run_analysis(
     recorder's date); a datetime is used as-is.
 
     Signal that fails quality gating (artifact, off-body, the first and
-    last minute) is excluded before the detector's beats are used, and the
-    report states how much time was analyzed.
+    last minute) is excluded before the detector's beats are used, a long
+    off-body tail is trimmed before detection, and the report states how
+    much time was analyzed and trimmed.
     """
     rec = load_recording(input_path)
     if isinstance(start_time, str):
@@ -62,6 +63,13 @@ def run_analysis(
     if start_time is not None:
         rec = replace(rec, start_time=start_time)
     quality = assess_quality(rec.samples, rec.sample_rate)
+    if quality.trimmed_sec > 0:  # the off-body tail: not ECG, and detection need not chew through it
+        keep = int(round(quality.duration_sec * rec.sample_rate))
+        rec = replace(
+            rec,
+            samples=rec.samples[:keep],
+            channels=None if rec.channels is None else rec.channels[:, :keep],
+        )
     beats = exclude_beats(detect_beats(rec.samples, rec.sample_rate), quality)
     labeled = classify_beats(beats)
     summary = summarize(labeled, dog_weight_class=dog_weight_class, quality=quality)

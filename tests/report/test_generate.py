@@ -187,6 +187,15 @@ def test_recording_group_reports_duration_analyzed_and_excluded():
     assert rows["Total beats"].value == "7"
 
 
+def test_recording_group_says_how_long_the_recorder_ran_when_a_tail_was_trimmed():
+    beats = _couplet_and_single()
+    q = SignalQuality(7200.0, ((0.0, 60.0), (7140.0, 7200.0)), trimmed_sec=360000.0)
+    rows = _rows(build_content(beats, summarize(beats, quality=q), None), "Recording")
+    assert rows["Duration"] == SummaryRow(
+        "Duration", "2h 0m", "recorder ran 102h 0m; 100h 0m off-body tail trimmed"
+    )
+
+
 def test_recording_group_without_start_says_unknown():
     beats = _couplet_and_single()
     assert _rows(build_content(beats, summarize(beats), None), "Recording")["Start"].value == "unknown"
