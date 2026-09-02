@@ -20,6 +20,7 @@ MIN_SPAN_SEC = 5.0  # so a sub-second brady/tachy event is still visible at 2.5 
 # on color alone.
 LANES = [  # (label, color)
     ("PVC", "#2a78d6"),
+    ("Escape", "#7b5cd6"),
     ("Pause", "#eb6834"),
     ("Brady", "#1baf7a"),
     ("Tachy", "#eda100"),
@@ -108,6 +109,7 @@ def draw_timeline(
 
     lane_items = [
         [b.time for b in beats if b.label == "V"],
+        list(summary.escape_beats),
         list(summary.pauses),
         list(summary.bradycardia_events),
         list(summary.tachycardia_events),

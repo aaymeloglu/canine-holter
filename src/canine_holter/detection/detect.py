@@ -1,5 +1,6 @@
 import neurokit2 as nk
 import numpy as np
+from neurokit2.signal import signal_smooth
 from scipy.ndimage import uniform_filter1d
 from scipy.signal import find_peaks
 from canine_holter.types import Beat
@@ -11,6 +12,20 @@ QRS_ENVELOPE_INTEGRATION_SEC = 0.03
 QRS_WIDTH_THRESHOLD_FRACTION = 0.1  # of the envelope at the R-peak, or ...
 QRS_NOISE_FLOOR_FACTOR = 4.0  # ... this multiple of the local noise floor, whichever is higher: hash noise otherwise holds the envelope above 10% and the width lands on the noise, not the QRS edge
 QRS_NOISE_FLOOR_CONTEXT_SEC = 1.0  # the floor is the envelope's median over +/- this; QRS complexes fill well under half of any second
+# QRS bursts, as NeuroKit's default ("neurokit") detector finds them: the
+# smoothed absolute gradient above BURST_THRESHOLD_WEIGHT times its
+# BURST_AVERAGE_SEC running average, at least BURST_MIN_LENGTH_WEIGHT of
+# the mean burst length, fiducials at least BURST_MIN_DELAY_SEC apart.
+# NeuroKit keeps the most prominent local maximum inside a burst and drops
+# a burst that has none; on a lead where the QRS is a small r and a deep S
+# (DR400 Ch 2 and Ch 3 with the dog asleep) some beats have none, and the
+# other leads cannot outvote a lead that saw nothing. See
+# docs/superpowers/specs/2026-09-02-negative-qrs-fiducial-design.md.
+BURST_AVERAGE_SEC = 0.75
+BURST_THRESHOLD_WEIGHT = 1.5
+BURST_MIN_LENGTH_WEIGHT = 0.4
+BURST_MIN_DELAY_SEC = 0.3
+BASELINE_SEC = 0.2  # a fiducial's deflection is measured from the median of this much signal before it
 # Phantom beats: the detector invents beats inside long RR gaps at slow
 # resting rates. A peak under MIN_R_AMPLITUDE_FRACTION of the median peak
 # amplitude is one; a real PVC can be smaller than sinus beats, but not
@@ -63,12 +78,13 @@ def detect_beats(leads: np.ndarray, sample_rate: float) -> list[Beat]:
     """Detect beats on one lead (a 1-D array) or several (n_leads, n_samples)
     and estimate each beat's QRS width, returning unlabeled Beats.
 
-    Each lead is detected on its own: NeuroKit2 R-peaks, then the
-    amplitude, search-back, and T-wave passes below. With several leads a
-    beat is where at least MIN_AGREEING_LEADS leads agree (see _agree), so
-    a lead whose morphology has shifted with posture can neither invent a
-    beat nor lose one the others see. Its time is the median of the
-    agreeing leads' peaks.
+    Each lead is detected on its own: NeuroKit2's QRS bursts and R-peaks
+    (_qrs_fiducials), then the amplitude, search-back, and T-wave passes
+    below. With several leads a beat is where at least MIN_AGREEING_LEADS
+    leads agree (see _agree), so a lead whose morphology has shifted with
+    posture can neither invent a beat nor lose one the others see; a lead
+    that shows a QRS as a bare trough can still vote for it. Its time is
+    the median of the agreeing leads' peaks.
 
     QRS width comes from a Pan-Tompkins-style derivative-energy envelope
     measured on every lead at that lead's own peak, and the beat's width
@@ -107,65 +123,137 @@ def detect_beats(leads: np.ndarray, sample_rate: float) -> list[Beat]:
     return beats
 
 
-def _lead_peaks(cleaned: np.ndarray, sample_rate: float) -> np.ndarray:
-    """One lead's R-peaks after the three single-lead correction passes."""
-    _, r_info = nk.ecg_peaks(cleaned, sampling_rate=sample_rate)
-    r_peaks = _reject_low_amplitude_peaks(cleaned, r_info["ECG_R_Peaks"], sample_rate)
+def _lead_peaks(cleaned: np.ndarray, sample_rate: float) -> tuple[np.ndarray, np.ndarray]:
+    """One lead's R-peaks, and a parallel boolean array marking the ones
+    that came from the no-maximum fallback of _qrs_fiducials.
+
+    The resolved peaks go through the three single-lead correction passes
+    exactly as before. The fallback fiducials do not: they exist only to
+    let this lead corroborate a beat another lead resolved (see _agree),
+    and inside the passes they would fill gaps and set rhythm history that
+    a T-wave trough has no business setting. A fallback within
+    T_WAVE_MAX_COUPLING_SEC after a resolved peak is that beat's T wave,
+    and one within BURST_MIN_DELAY_SEC before a resolved peak is part of
+    that beat; both are dropped. The amplitude rule judges the rest against
+    the resolved peaks' median."""
+    resolved, fallback = _qrs_fiducials(cleaned, sample_rate)
+    r_peaks = _reject_low_amplitude_peaks(cleaned, resolved, sample_rate)
     r_peaks = fill_fast_gaps(cleaned, r_peaks, sample_rate)
-    return drop_interpolated_t_waves(r_peaks, sample_rate)
+    r_peaks = drop_interpolated_t_waves(r_peaks, sample_rate)
+    fallback = _reject_low_amplitude_peaks(cleaned, fallback, sample_rate, reference=resolved)
+    after, before = int(T_WAVE_MAX_COUPLING_SEC * sample_rate), int(BURST_MIN_DELAY_SEC * sample_rate)
+    fallback = np.array([
+        f for f in fallback
+        if not any(-before <= f - r <= after for r in r_peaks[max(0, np.searchsorted(r_peaks, f) - 1): np.searchsorted(r_peaks, f) + 1])
+    ], dtype=int)
+    peaks = np.sort(np.concatenate([r_peaks, fallback]))
+    return peaks, np.isin(peaks, fallback)
 
 
-def _agree(peaks_by_lead: list[np.ndarray], tolerance: int) -> np.ndarray:
+def _qrs_fiducials(cleaned: np.ndarray, sample_rate: float) -> tuple[np.ndarray, np.ndarray]:
+    """One fiducial per QRS burst (see the BURST_* constants), as two
+    arrays: the bursts NeuroKit resolves and the bursts it drops.
+
+    The burst logic is NeuroKit2's ``_ecg_findpeaks_neurokit`` (MIT
+    licence), parameters and all: the first array is exactly what
+    ``nk.ecg_peaks`` returns. The second holds a fiducial for each burst
+    with no local maximum, at the _fiducial of its steepest sample. These
+    fallback fiducials are for lead agreement to corroborate a beat another
+    lead resolved (see _agree); on their own they are as often a negative T
+    wave as a negative QRS, which is why they are kept apart."""
+    smooth_kernel = int(np.rint(GRADIENT_SMOOTH_SEC * sample_rate))
+    average_kernel = int(np.rint(BURST_AVERAGE_SEC * sample_rate))
+    smooth_gradient = signal_smooth(np.abs(np.gradient(cleaned)), kernel="boxcar", size=smooth_kernel)
+    average_gradient = signal_smooth(smooth_gradient, kernel="boxcar", size=average_kernel)
+    burst = smooth_gradient > BURST_THRESHOLD_WEIGHT * average_gradient
+    starts = np.where(~burst[:-1] & burst[1:])[0]
+    ends = np.where(burst[:-1] & ~burst[1:])[0]
+    empty = np.array([], dtype=int)
+    if len(starts) == 0:
+        return empty, empty
+    ends = ends[ends > starts[0]]
+    n = min(len(starts), len(ends))
+    min_length = np.mean(ends[:n] - starts[:n]) * BURST_MIN_LENGTH_WEIGHT
+    min_delay = int(np.rint(BURST_MIN_DELAY_SEC * sample_rate))
+    resolved, fallback = [], []
+    last_resolved = last_any = 0  # the delay for resolved peaks is against resolved peaks only, as in NeuroKit
+    for start, end in zip(starts[:n], ends[:n]):
+        if end - start < min_length:
+            continue
+        maxima, properties = find_peaks(cleaned[start:end], prominence=(None, None))
+        if maxima.size > 0:
+            fiducial = start + maxima[np.argmax(properties["prominences"])]
+            if fiducial - last_resolved > min_delay:
+                resolved.append(fiducial)
+                last_resolved = last_any = fiducial
+        else:
+            fiducial = _fiducial(cleaned, start + int(np.argmax(smooth_gradient[start:end])), sample_rate)
+            if fiducial - last_any > min_delay:
+                fallback.append(fiducial)
+                last_any = fiducial
+    return np.asarray(resolved, dtype=int), np.asarray(fallback, dtype=int)
+
+
+def _agree(peaks_by_lead: list[tuple[np.ndarray, np.ndarray]], tolerance: int) -> np.ndarray:
     """Beats that at least MIN_AGREEING_LEADS leads (or every lead, when
     there are fewer) detected in a chain of peaks each within `tolerance`
-    samples of the next (see _clusters), as
-    an (n_beats, n_leads) array holding each lead's own peak, or the
-    agreeing leads' median position for a lead that missed the beat."""
+    samples of the next (see _clusters), at least one of them a resolved
+    peak rather than a fallback, as an (n_beats, n_leads) array holding
+    each lead's own peak, or the agreeing leads' median position for a
+    lead that missed the beat. Each lead contributes (peaks, fallback
+    flags) as _lead_peaks returns them."""
     n_leads = len(peaks_by_lead)
     needed = min(MIN_AGREEING_LEADS, n_leads)
+    events = sorted(
+        (int(p), k, bool(f)) for k, (peaks, flags) in enumerate(peaks_by_lead) for p, f in zip(peaks, flags)
+    )
     rows = []
-    for cluster in _clusters(sorted((int(p), k) for k, ps in enumerate(peaks_by_lead) for p in ps), tolerance):
-        if len(cluster) >= needed:
-            consensus = int(np.median(list(cluster.values())))
-            rows.append([cluster.get(k, consensus) for k in range(n_leads)])
+    for cluster in _clusters(events, tolerance):
+        if len(cluster) >= needed and not all(fallback for _, fallback in cluster.values()):
+            consensus = int(np.median([p for p, _ in cluster.values()]))
+            rows.append([cluster.get(k, (consensus, False))[0] for k in range(n_leads)])
     return np.array(rows, dtype=int).reshape(-1, n_leads)
 
 
-def _clusters(events: list[tuple[int, int]], tolerance: int):
-    """Group (position, lead) events, sorted by position, into chains whose
-    consecutive events are within `tolerance` of each other and whose
-    leads are distinct; each group maps lead -> position. Chaining, rather
-    than anchoring at the first event, keeps a QRS whose fiducials
-    straddle the tolerance from splitting into two beats."""
-    cluster: dict[int, int] = {}
+def _clusters(events: list[tuple[int, int, bool]], tolerance: int):
+    """Group (position, lead, fallback) events, sorted by position, into
+    chains whose consecutive events are within `tolerance` of each other
+    and whose leads are distinct; each group maps lead -> (position,
+    fallback). Chaining, rather than anchoring at the first event, keeps a
+    QRS whose fiducials straddle the tolerance from splitting into two
+    beats."""
+    cluster: dict[int, tuple[int, bool]] = {}
     last = 0
-    for position, lead in events:
+    for position, lead, fallback in events:
         if cluster and (position - last > tolerance or lead in cluster):
             yield cluster
             cluster = {}
-        cluster[lead] = position
+        cluster[lead] = (position, fallback)
         last = position
     if cluster:
         yield cluster
 
 
 def _reject_low_amplitude_peaks(
-    cleaned: np.ndarray, r_peaks: np.ndarray, sample_rate: float
+    cleaned: np.ndarray, r_peaks: np.ndarray, sample_rate: float, reference: np.ndarray | None = None
 ) -> np.ndarray:
     """Drop detected peaks whose local peak-to-peak amplitude is far below
-    the median over all peaks. A zero median means every peak sits on flat
-    signal, so nothing is kept (fail closed)."""
+    the median over all peaks (or over `reference` peaks when given). A
+    zero median means every peak sits on flat signal, so nothing is kept
+    (fail closed)."""
     r_peaks = np.asarray(r_peaks, dtype=int)
-    if len(r_peaks) == 0:
-        return r_peaks
-    half = int(R_AMPLITUDE_WINDOW_SEC * sample_rate)
-    amplitudes = np.array([
-        cleaned[max(0, r - half): r + half + 1].ptp() for r in r_peaks
-    ])
-    reference = np.median(amplitudes)
-    if reference <= 0:
+    reference = r_peaks if reference is None else np.asarray(reference, dtype=int)
+    if len(r_peaks) == 0 or len(reference) == 0:
         return r_peaks[:0]
-    return r_peaks[amplitudes >= MIN_R_AMPLITUDE_FRACTION * reference]
+    half = int(R_AMPLITUDE_WINDOW_SEC * sample_rate)
+
+    def amplitude(peaks: np.ndarray) -> np.ndarray:
+        return np.array([cleaned[max(0, r - half): r + half + 1].ptp() for r in peaks])
+
+    median = np.median(amplitude(reference))
+    if median <= 0:
+        return r_peaks[:0]
+    return r_peaks[amplitude(r_peaks) >= MIN_R_AMPLITUDE_FRACTION * median]
 
 
 def _gradient_feature(cleaned: np.ndarray, sample_rate: float) -> np.ndarray:
@@ -178,7 +266,7 @@ def _fiducial(cleaned: np.ndarray, index: int, sample_rate: float) -> int:
     on its trough rather than its small r wave."""
     half = int(FIDUCIAL_HALF_SEC * sample_rate)
     lo, hi = max(0, index - half), min(len(cleaned), index + half + 1)
-    baseline = np.median(cleaned[max(0, index - int(0.2 * sample_rate)): index]) if index > 0 else 0.0
+    baseline = np.median(cleaned[max(0, index - int(BASELINE_SEC * sample_rate)): index]) if index > 0 else 0.0
     return lo + int(np.argmax(np.abs(cleaned[lo:hi] - baseline)))
 
 
