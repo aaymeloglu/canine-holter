@@ -53,9 +53,9 @@ def choose_recording(state: AppState) -> AppState:
     path = filedialog.askopenfilename(
         title="Select a Holter recording",
         filetypes=[
-            ("Supported recordings", "*.hea *.dat *.raw"),
+            ("Supported recordings", "*.hea *.dat"),
             ("WFDB headers", "*.hea"),
-            ("DR200/DR400 flash.dat / decoded channels", "*.dat *.raw"),
+            ("DR200/DR400 flash.dat", "*.dat"),
             ("All files", "*"),
         ],
     )

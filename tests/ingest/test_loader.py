@@ -1,10 +1,8 @@
 import os
-import struct
 
 import numpy as np
 import pytest
 
-from canine_holter.ingest import loader
 from canine_holter.ingest.loader import load_recording
 
 
@@ -27,17 +25,6 @@ def test_detects_wfdb_header_path():
 
     assert rec.sample_rate == 360.0
     assert rec.source == os.path.splitext(header_path)[0]
-
-
-@pytest.mark.parametrize("filename", ["flashc0.dat", "FLASHC2.DAT", "channel.raw"])
-def test_detects_decoded_dr200_channel(tmp_path, filename):
-    path = tmp_path / filename
-    path.write_bytes(struct.pack("<hh", 0, 80))
-
-    rec = load_recording(str(path))
-
-    assert rec.sample_rate == 180.0
-    np.testing.assert_allclose(rec.samples, [0.0, 1.0])
 
 
 def test_detects_native_flash_dat(tmp_path, monkeypatch):
