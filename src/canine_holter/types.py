@@ -5,28 +5,21 @@ import numpy as np
 
 @dataclass(frozen=True, eq=False)
 class Recording:
-    """A single-lead ECG recording, in millivolts, with metadata.
+    """An ECG recording in millivolts.
 
-    Equality is identity-based (eq=False): the default dataclass eq would
-    compare field tuples, which calls bool() on the samples array comparison
-    and raises ValueError, since np.ndarray.__eq__ returns an array rather
-    than a bool. Identity comparison is the sane default for objects
-    wrapping large sample buffers.
-
-    Note: frozen=True only prevents reassigning fields (e.g. rec.source = "x"
-    raises FrozenInstanceError). It does not make the samples array itself
-    immutable - numpy arrays are mutable in place regardless of Python-level
-    frozen semantics, so callers must not mutate .samples after construction.
+    eq=False: the default dataclass equality would compare the sample
+    arrays and raise. frozen=True stops field reassignment only; the
+    arrays themselves must not be mutated after construction.
 
     samples: the lead quality gating judges and, for a single-lead input,
-        the lead beats are detected on, in millivolts (1-D)
+        the lead beats are detected on (1-D)
     sample_rate: samples per second
     start_time: wall-clock time the recording began, if known
-    source: identifies where this recording came from (e.g. a fixture name or file path)
+    source: where the recording came from (a fixture name or file path)
     channels: every recorded lead, shape (n_channels, n_samples), in
-        millivolts and recorder order; None when the input carried a single
-        lead. Beat detection runs on every lead and keeps the beats they
-        agree on; the report draws them all.
+        recorder order; None when the input carried a single lead. Beat
+        detection runs on every lead and keeps the beats they agree on;
+        the report draws them all.
     channel_names: one name per channels row
     """
     samples: np.ndarray

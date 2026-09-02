@@ -242,14 +242,8 @@ def _decode_data_block(block: bytes) -> tuple[np.ndarray, np.ndarray]:
     return encoded, marker_rows
 
 
-def load_native_flash(
-    path: str | Path,
-    *,
-    channel: int = 0,
-    source: str | None = None,
-) -> Recording:
-    """Load an SD-card ``flash.dat`` recording: all three ECG channels, with
-    ``channel`` selecting the analysis lead.
+def load_native_flash(path: str | Path, *, source: str | None = None) -> Recording:
+    """Load an SD-card ``flash.dat`` recording: all three ECG channels.
 
     DR200 SampleStorageFormat 1 stores 304 three-channel timepoints in every
     checksummed ECG block.  Each channel is encoded as a nonlinear four-bit
@@ -260,9 +254,6 @@ def load_native_flash(
     stops at the first ECG block whose sequence number or serial differs
     from the first block's.
     """
-    if channel not in (0, 1, 2):
-        raise ValueError("channel must be 0, 1, or 2")
-
     flash_path = Path(path)
     try:
         size = flash_path.stat().st_size
@@ -296,7 +287,7 @@ def load_native_flash(
         [_replace_pacemaker_markers(ch) * DR200_MILLIVOLTS_PER_COUNT for ch in counts_by_channel]
     )
     return Recording(
-        samples=channels_mv[channel],
+        samples=channels_mv[0],
         sample_rate=DR200_SAMPLE_RATE,
         start_time=start_time,
         source=source if source is not None else str(flash_path),
