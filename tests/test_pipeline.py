@@ -136,7 +136,7 @@ def test_run_analysis_trims_an_off_body_tail_before_detection(tmp_path, report_t
     assert seen["n"] == 360000
     content = report_text()
     assert re.search(r"Duration:\s*1h 0m", content), content
-    assert "2h 0m off-body tail trimmed" in content, content
+    assert re.search(r"Recorder ran:\s*3h 0m \(off-body tail trimmed\)", content), content
 
 
 # --- start-time override -----------------------------------------------------

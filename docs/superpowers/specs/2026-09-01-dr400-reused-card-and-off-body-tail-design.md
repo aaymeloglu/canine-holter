@@ -145,10 +145,11 @@ for the last minute applies at the kept end.
 `run_analysis` slices `samples` and `channels` to `duration_sec` before
 detection when `trimmed_sec > 0`, so detection never sees the tail.
 
-`ArrhythmiaSummary` gains `trimmed_sec` from the quality result. The
-Recording panel's Duration row reads, when trimmed,
-`24h 46m` with the reference text `recorder ran 124h 56m; 100h 10m
-off-body tail trimmed`. Untrimmed reports are unchanged.
+`ArrhythmiaSummary` gains `trimmed_sec` from the quality result. When a
+tail was trimmed the Recording panel gains a row after Duration:
+`Recorder ran 124h 55m` with the reference text `off-body tail trimmed`
+(the reference column is too narrow for a sentence). Untrimmed reports
+are unchanged.
 
 ## 5. Docs and text
 
