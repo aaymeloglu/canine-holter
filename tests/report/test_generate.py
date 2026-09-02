@@ -250,11 +250,13 @@ def test_ectopy_group_scales_pvcs_by_analyzed_time_and_colors_the_band():
     assert rows["PVCs per 24 h"].status == "alert"
 
 
-def test_run_rows_show_beats_rate_and_time():
+def test_run_rows_show_beats_and_rate_and_leave_the_time_to_the_strip():
     beats = _with_run(_with_run(_steady(100, 0.5), 10, 5, 0.3), 50, 3, 0.25)
-    rows = _rows(build_content(beats, summarize(beats), datetime(2026, 8, 23, 15, 33, 8)), "Ventricular ectopy")
-    assert rows["Longest run"] == SummaryRow("Longest run", "5 beats, 200 bpm, 15:33:13")
-    assert rows["Fastest run"] == SummaryRow("Fastest run", "3 beats, 240 bpm, 15:33:33", "<180 bpm", "alert")
+    content = build_content(beats, summarize(beats), datetime(2026, 8, 23, 15, 33, 8))
+    rows = _rows(content, "Ventricular ectopy")
+    assert rows["Longest run"] == SummaryRow("Longest run", "5 beats, 200 bpm")
+    assert rows["Fastest run"] == SummaryRow("Fastest run", "3 beats, 240 bpm", "<180 bpm", "alert")
+    assert any(item.caption.title == "Fastest run · 15:33:33" for item in content.sections[0].items)
 
 
 def test_heart_rate_group_has_mean_and_timed_extremes():
@@ -358,14 +360,14 @@ def test_couplet_caption_names_both_beats_and_is_an_alert():
     assert caption.status == "alert"
 
 
-def test_run_captions_are_timed_at_the_first_beat_like_the_summary_row():
-    # A run's clock time must match page 1 (RunStats.start_time) wherever it
-    # is shown; the run here straddles a second boundary so the centre reads
-    # one second later than the first beat.
+def test_run_captions_are_timed_at_the_first_beat():
+    # A run's clock time is RunStats.start_time wherever it is shown; the
+    # run here straddles a second boundary so the centre reads one second
+    # later than the first beat.
     beats = _with_run(_steady(100, 0.5), 50, 4, 0.4)  # V beats at 25.0-26.2 s
     start = datetime(2026, 8, 23, 15, 33, 8, 500000)
     content = build_content(beats, summarize(beats), start)
-    assert _rows(content, "Ventricular ectopy")["Fastest run"].value == "4 beats, 150 bpm, 15:33:33"
+    assert _rows(content, "Ventricular ectopy")["Fastest run"].value == "4 beats, 150 bpm"
     assert _captions(content, EXTREMES_TITLE)[-1].title == "Fastest run · 15:33:33"
     assert _captions(content, EVENTS_TITLE)[0].title == "Event 1 · 15:33:33"
 
@@ -525,16 +527,14 @@ def test_pause_rows_report_the_longest_sinus_interval_and_the_arrest_count():
     beats = _bridged_arrest()
     rows = _rows(build_content(beats, summarize(beats), None), "Pauses")
     assert rows["Longest"].value == "2.00 s"
-    assert rows["Longest sinus interval"] == SummaryRow(
-        "Longest sinus interval", "3.00 s", "1 escape beat inside", "caution"
-    )
+    assert rows["Sinus interval"] == SummaryRow("Sinus interval", "3.00 s", "longest; 1 escape beat inside", "caution")
     assert rows["Sinus arrests"] == SummaryRow("Sinus arrests", "1", "bridged by escape beats")
 
 
 def test_longest_sinus_interval_row_says_when_no_escape_beat_bridged_it():
     beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(3.77, 2.97, "N")]
     rows = _rows(build_content(beats, summarize(beats), None), "Pauses")
-    assert rows["Longest sinus interval"] == SummaryRow("Longest sinus interval", "2.97 s", "the longest pause", "caution")
+    assert rows["Sinus interval"] == SummaryRow("Sinus interval", "2.97 s", "longest: the longest pause", "caution")
 
 
 def test_extremes_get_a_bridged_arrest_strip_marking_the_escape_beat():

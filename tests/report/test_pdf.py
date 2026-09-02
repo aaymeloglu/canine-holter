@@ -199,6 +199,31 @@ def test_panels_never_run_into_the_row_below():
     plt.close(fig)
 
 
+def test_no_summary_row_text_overlaps_its_neighbour():
+    import matplotlib.pyplot as plt
+    from canine_holter.arrhythmia.burden import summarize
+    from canine_holter.quality.gate import SignalQuality
+    from canine_holter.report.pdf import _summary_page
+
+    # Wide content in every column: a trimmed tail, timed extremes, a fast
+    # run with its rate and time, a bridged sinus arrest, escape couplets.
+    beats = _beats_with_couplets(1)
+    for i in (50, 51):
+        beats[i] = Beat(time=beats[i].time, rr_interval=0.8, qrs_duration=0.14, label="E")
+    for i in (120, 121, 122, 123):
+        beats[i] = Beat(time=beats[i].time, rr_interval=0.25, qrs_duration=0.14, label="V")
+    q = SignalQuality(200.0, ((0.0, 60.0),), trimmed_sec=3600.0)
+    content = build_content(beats, summarize(beats, dog_weight_class="large", quality=q), datetime(2026, 8, 27, 10, 18, 49))
+    fig = _summary_page(content)
+    renderer = fig.canvas.get_renderer()
+    boxes = [(t.get_text(), t.get_window_extent(renderer)) for t in fig.texts if t.get_text().strip()]
+    for (a, ba), (b, bb) in ((x, y) for i, x in enumerate(boxes) for y in boxes[i + 1:]):
+        same_line = abs(ba.y0 - bb.y0) < ba.height / 2
+        if same_line and ba.x0 < bb.x1 and bb.x0 < ba.x1:
+            raise AssertionError(f"{a!r} overlaps {b!r}")
+    plt.close(fig)
+
+
 def test_two_strips_with_three_line_captions_do_not_collide():
     import matplotlib.pyplot as plt
     from canine_holter.report.pdf import _STRIP_SLOT, _TICK_ROW, _strip_page

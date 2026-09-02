@@ -279,7 +279,9 @@ def _supraventricular_group() -> SummaryGroup:
 
 
 def _run_text(run: RunStats, start_time: datetime | None) -> str:
-    return f"{run.beats} beats, {run.bpm:.0f} bpm, {short_time(run.start_time, start_time)}"
+    """Beats and rate only: the time is on the run's strip, and the panel
+    row has no room for it beside the rate band."""
+    return f"{run.beats} beats, {run.bpm:.0f} bpm"
 
 
 def _pvc_24h_row(summary: ArrhythmiaSummary) -> SummaryRow:
@@ -318,11 +320,9 @@ def _sinus_interval_row(interval: SinusArrest | None) -> SummaryRow:
     """The longest gap between sinus beats: an escape beat interrupts a
     sinus arrest without ending it, so this can exceed the longest RR."""
     if interval is None:
-        return SummaryRow("Longest sinus interval", "n/a")
-    reference = f"{_escape_count(interval.escape_beats)} inside" if interval.escape_beats else "the longest pause"
-    return SummaryRow(
-        "Longest sinus interval", f"{interval.duration_sec:.2f} s", reference, pause_status(interval.duration_sec)
-    )
+        return SummaryRow("Sinus interval", "n/a", "longest")
+    reference = f"longest; {_escape_count(interval.escape_beats)} inside" if interval.escape_beats else "longest: the longest pause"
+    return SummaryRow("Sinus interval", f"{interval.duration_sec:.2f} s", reference, pause_status(interval.duration_sec))
 
 
 def _pause_group(summary: ArrhythmiaSummary) -> SummaryGroup:

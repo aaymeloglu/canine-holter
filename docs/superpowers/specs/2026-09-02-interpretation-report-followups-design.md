@@ -40,9 +40,10 @@ interval, bridged or not, so it is never shorter than the longest N-to-N
 RR. `longest_pause_sec` stays the longest RR: the two numbers answer
 different questions and the report shows both.
 
-Report: the Pauses panel gains `Longest sinus interval`, coloured by the
-pause band, with the reference saying how many escape beats bridged it,
-and `Sinus arrests`, the count bridged by escape beats. When the longest
+Report: the Pauses panel gains `Sinus interval` (the longest; the label
+is short because the value column is narrow), coloured by the pause band,
+with the reference saying how many escape beats bridged it, and `Sinus
+arrests`, the count bridged by escape beats. When the longest
 sinus interval is bridged, the extremes section gets a strip bracketing
 it from sinus beat to sinus beat with the escape beats marked; when it
 is a plain RR it is already the longest-pause strip.
@@ -90,7 +91,9 @@ the button at noted clock times, then diff those blocks against these.
 The Heart rate panel grows to eight rows and Ventricular ectopy to ten,
 so fixed panel-row tops no longer fit. `pdf.py` stacks the three panel
 rows from the tallest panel in each row plus a gap, instead of
-`_PANEL_TOP`; the existing no-overlap test becomes a test of that.
+`_PANEL_TOP`. The value column moves right for the wider labels, which
+left no room for the time in the run rows; the run strips carry it. A
+test renders the page and checks that no two texts on a line overlap.
 
 ## Testing
 

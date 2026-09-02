@@ -40,7 +40,7 @@ LABEL_COLOR = "#52514e"
 REFERENCE_COLOR = "#6f6e6b"
 _PANEL_X = (_LEFT, 0.53)  # left edge of each panel column
 _PANEL_W = 0.42
-_VALUE_DX = 0.12  # value column offset inside a panel
+_VALUE_DX = 0.145  # value column offset inside a panel; the widest labels (Escape couplets, Sinus interval) need this at 9 pt
 _PANEL_FIRST_TOP = 0.86  # top of the first panel row; each later row starts under the tallest panel of the row above
 _PANEL_GAP = 0.025
 
