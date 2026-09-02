@@ -49,11 +49,12 @@ def test_renders_with_every_event_type_and_wall_clock():
         bradycardia_events=[(10.0, 30.0)],
         tachycardia_events=[(100.0, 100.5)],
         pauses=[50.0, 60.0],
+        escape_beats=[75.0],
     )
     fig, (_, ax_ev) = _draw(beats, summary, datetime(2026, 8, 23, 15, 33, 8))
 
-    assert [tick.get_text() for tick in ax_ev.get_yticklabels()] == ["Tachy", "Brady", "Pause", "PVC"]
-    assert len(ax_ev.collections) == 34  # 30 PVCs, two pauses, one brady event, one tachy event
+    assert [tick.get_text() for tick in ax_ev.get_yticklabels()] == ["Tachy", "Brady", "Pause", "Escape", "PVC"]
+    assert len(ax_ev.collections) == 35  # 30 PVCs, one escape beat, two pauses, one brady event, one tachy event
     assert ax_ev.get_xlabel() == "time of day"
     assert isinstance(ax_ev.xaxis.get_major_formatter(), mdates.DateFormatter)
     plt.close(fig)

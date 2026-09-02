@@ -69,6 +69,7 @@ class HourRow:
     runs: int
     pauses: int
     analyzed_sec: float  # seconds of the hour not excluded by quality gating
+    escapes: int = 0  # ventricular escape beats ("E")
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,7 @@ class ArrhythmiaSummary:
     tachycardia_events: list[tuple[float, float]]
     pauses: list[float]
     longest_pause_sec: float | None = None  # longest RR interval in the recording
+    escape_beats: list[float] = field(default_factory=list)  # times of ventricular escape beats ("E"): wide and late, never in a PVC count
     long_pauses: int = 0  # RR intervals over LONG_PAUSE_THRESHOLD_SEC
     slow_beats: int = 0  # HR_EXTREME_WINDOW_BEATS-beat median windows under the bradycardia threshold ...
     fast_beats: int = 0  # ... and over the tachycardia threshold ...
@@ -101,7 +103,9 @@ class ArrhythmiaSummary:
 
 
 def pvc_runs(beats: list[Beat]) -> list[list[Beat]]:
-    """Group consecutive PVC-labeled beats into runs."""
+    """Group consecutive PVC-labeled beats into runs. An escape beat ("E")
+    ends a run: a run of escape beats is an idioventricular rhythm, not
+    ventricular tachycardia, and is not counted here."""
     runs: list[list[Beat]] = []
     current: list[Beat] = []
     for beat in beats:
@@ -235,6 +239,7 @@ def hourly_rows(
             runs=sum(1 for r in hour_runs if len(r) >= MIN_RUN_BEATS),
             pauses=sum(1 for b in in_hour if b.rr_interval and b.rr_interval >= PAUSE_THRESHOLD_SEC),
             analyzed_sec=quality.analyzed_within(start, end) if quality else end - start,
+            escapes=sum(1 for b in in_hour if b.label == "E"),
         ))
     return rows
 
@@ -346,6 +351,7 @@ def summarize(
         tachycardia_events=tachycardia_events,
         pauses=pauses,
         longest_pause_sec=longest_pause_sec,
+        escape_beats=[b.time for b in beats if b.label == "E"],
         long_pauses=sum(1 for rr in rr_intervals if rr > LONG_PAUSE_THRESHOLD_SEC),
         slow_beats=int(np.sum(window_bpm < brady_threshold)),
         fast_beats=int(np.sum(window_bpm > tachy_threshold)),

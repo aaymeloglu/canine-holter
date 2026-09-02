@@ -6,6 +6,7 @@ import numpy as np
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import summarize
 from canine_holter.report.generate import build_content
+import canine_holter.report.pdf as pdf
 from canine_holter.report.pdf import write_pdf
 
 
@@ -169,6 +170,44 @@ def test_summary_page_lays_the_six_panels_out_in_three_rows():
     # The footer sits below the third row of panels.
     footer_y = min(t.get_position()[1] for t in fig.texts if "not a diagnosis" in t.get_text())
     assert footer_y < _PANEL_TOP[2] - 0.1
+    plt.close(fig)
+
+
+def test_panels_never_run_into_the_row_below():
+    import matplotlib.pyplot as plt
+    from canine_holter.arrhythmia.burden import summarize
+    from canine_holter.quality.gate import SignalQuality
+    from canine_holter.report.pdf import _PANEL_TOP, _draw_group
+
+    # The tallest content each panel can have: a trimmed tail (recording), rates
+    # (heart rate), and an escape beat (ventricular ectopy).
+    beats = _beats_with_couplets(1)
+    beats[50] = Beat(time=beats[50].time, rr_interval=0.8, qrs_duration=0.14, label="E")
+    q = SignalQuality(200.0, ((0.0, 60.0),), trimmed_sec=3600.0)
+    content = build_content(beats, summarize(beats, quality=q), None)
+    fig = plt.figure(figsize=(8.5, 11))
+    for i, group in enumerate(content.summary_groups):
+        row = i // 2
+        bottom = _draw_group(fig, 0.1 + 0.45 * (i % 2), _PANEL_TOP[row], group)
+        if row + 1 < len(_PANEL_TOP):
+            # bottom is where a further row would start, one line step under the last row's text
+            assert bottom >= _PANEL_TOP[row + 1], f"{group.title} runs into the row below"
+    plt.close(fig)
+
+
+def test_two_strips_with_three_line_captions_do_not_collide():
+    import matplotlib.pyplot as plt
+    from canine_holter.report.pdf import _STRIP_SLOT, _TICK_ROW, _strip_page
+
+    beats = _beats_with_couplets(2)  # couplet captions: two lines of "what" and one of significance
+    content = build_content(beats, summarize(beats), None)
+    section = next(s for s in content.sections if s.heading.startswith("Flagged events"))
+    assert all(len(pdf._caption_lines(i.caption)) + len(pdf._significance_lines(i.caption)) == 3 for i in section.items)
+    sig = np.sin(np.linspace(0, 2000, 100 * 160))
+    fig = _strip_page(section.heading, section.items[:2], sig[None, :].repeat(3, axis=0), ("a", "b", "c"), 100.0, beats)
+    first_strip_bottom = fig.axes[2].get_position().y0  # the third lead of the first strip
+    second_title_top = 0.90 - _STRIP_SLOT
+    assert first_strip_bottom - _TICK_ROW >= second_title_top
     plt.close(fig)
 
 

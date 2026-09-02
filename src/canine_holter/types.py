@@ -53,7 +53,8 @@ class Beat:
     time: seconds from the start of the recording
     rr_interval: seconds since the previous beat; None for the first beat
     qrs_duration: seconds; None if QRS delineation failed for this beat
-    label: "N" (normal), "V" (PVC), "U" (undetermined), or None (not yet classified)
+    label: "N" (normal), "V" (PVC), "E" (ventricular escape beat: wide and
+        late), "U" (undetermined), or None (not yet classified)
     """
     time: float
     rr_interval: float | None

@@ -41,13 +41,21 @@ REFERENCE_COLOR = "#6f6e6b"
 _PANEL_X = (_LEFT, 0.53)  # left edge of each panel column
 _PANEL_W = 0.42
 _VALUE_DX = 0.12  # value column offset inside a panel
-_PANEL_TOP = (0.86, 0.68, 0.50)  # top of each panel row; the tallest panel (seven rows) fits the 0.18 pitch
+_PANEL_TOP = (0.86, 0.68, 0.46)  # top of each panel row; the middle row holds the tallest panel (ventricular ectopy, eight rows)
 
 _STRIP_LEFT = 0.17  # leaves room for the lead names left of the strip
 _STRIP_W = STRIP_WIDTH_MM / _PAGE_MM[0]  # 6 s at 25 mm/s, as a figure fraction
 _CHANNEL_H = CHANNEL_HEIGHT_MM / _PAGE_MM[1]  # 3 mV at 10 mm/mV, per lead
 _STRIP_SLOT = 0.45  # figure fraction per strip (caption + leads); two per page
 _CAPTION_STEP = 0.017
+_TITLE_STEP = 0.02  # title to the first caption line
+_LABEL_ROWS = 0.03  # room for the beat-label and RR rows drawn above the top lead
+_TICK_ROW = 0.012  # the time-axis labels under the bottom lead
+# A slot holds a title, up to three caption lines (two of "what", one of
+# significance), the label rows, three leads at true scale, and the tick
+# row: 0.02 + 0.051 + 0.03 + 0.322 + 0.012 = 0.435. A fourth caption line
+# would put the tick row under the next strip's title.
+MAX_CAPTION_LINES = 3
 _CAPTION_WRAP = 105
 
 
@@ -169,7 +177,7 @@ def _strip_page(
         run, caption, pause = item.run, item.caption, item.pause
         y = 0.90 - slot * _STRIP_SLOT
         fig.text(_LEFT, y, caption.title, va="top", fontsize=10, fontweight="bold")
-        y -= 0.024
+        y -= _TITLE_STEP
         what = _caption_lines(caption)
         for line in what:
             fig.text(_LEFT, y, line, va="top", fontsize=8.5)
@@ -181,7 +189,7 @@ def _strip_page(
                 fontweight="bold" if caption.status else "normal",
             )
             y -= _CAPTION_STEP
-        y -= 0.04  # room for the beat-label and RR rows above the top lead
+        y -= _LABEL_ROWS
         height = _CHANNEL_H * channels.shape[0]
         gs = GridSpec(1, 1, figure=fig, left=_STRIP_LEFT, right=_STRIP_LEFT + _STRIP_W, top=y, bottom=y - height)
         axes = draw_strip(

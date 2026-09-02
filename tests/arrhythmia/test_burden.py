@@ -437,3 +437,26 @@ def test_hourly_rows_from_a_start_on_the_hour_match_the_unaligned_rows():
     beats = _hours_of_beats(1.5, 0.5)
     aligned = summarize(beats, start_time=datetime(2026, 8, 27, 10, 0, 0)).hourly
     assert [(r.start_sec, r.end_sec) for r in aligned] == [(r.start_sec, r.end_sec) for r in summarize(beats).hourly]
+
+
+# --- ventricular escape beats -------------------------------------------------
+
+
+def test_summary_lists_escape_beat_times_and_keeps_them_out_of_pvc_counts():
+    beats = _chain([None, 0.8, 0.8, 2.0, 0.8, 0.5, 0.8], ["N", "N", "N", "E", "N", "V", "N"])
+    s = summarize(beats)
+    assert s.escape_beats == [beats[3].time]
+    assert (s.pvc_count, s.couplets) == (1, 0)
+
+
+def test_an_escape_beat_ends_a_pvc_run():
+    beats = _chain([None, 0.8, 0.5, 0.5, 2.0, 0.5, 0.8], ["N", "N", "V", "V", "E", "V", "N"])
+    assert [len(r) for r in pvc_runs(beats)] == [2, 1]
+
+
+def test_hourly_rows_count_escape_beats_in_their_hour():
+    beats = _hours_of_beats(2.0, 0.5)
+    beats[100] = Beat(time=beats[100].time, rr_interval=0.5, qrs_duration=0.14, label="E")
+    beats[8000] = Beat(time=beats[8000].time, rr_interval=0.5, qrs_duration=0.14, label="E")
+    rows = summarize(beats).hourly
+    assert [r.escapes for r in rows] == [1, 1, 0]

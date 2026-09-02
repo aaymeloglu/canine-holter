@@ -1,4 +1,5 @@
 import os
+import pytest
 import tempfile
 from datetime import datetime
 import numpy as np
@@ -6,6 +7,7 @@ from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import summarize
 from canine_holter.quality.gate import SignalQuality
 from canine_holter.report.generate import (
+    ESCAPE_TITLE,
     EVENTS_TITLE,
     EXTREMES_TITLE,
     HOURLY_TITLE,
@@ -153,7 +155,8 @@ def test_no_extremes_section_when_heart_rate_not_computed():
 
 
 HOURLY_HEADER = [
-    "Hour", "Analyzed (min)", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets", "Runs (3+)", "Pauses",
+    "Hour", "Analyzed (min)", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets", "Runs (3+)", "Escapes",
+    "Pauses",
 ]
 
 
@@ -162,7 +165,7 @@ def test_hourly_table_rows_with_wall_clock_labels():
     start = datetime(2026, 8, 23, 15, 33, 8)
     content = build_content(beats, summarize(beats), start)
     assert content.hourly_header == HOURLY_HEADER
-    assert content.hourly_rows[0] == ["15:33-16:33", "60.0", "7200", "120", "120", "120", "3", "0", "1", "0"]
+    assert content.hourly_rows[0] == ["15:33-16:33", "60.0", "7200", "120", "120", "120", "3", "0", "1", "0", "0"]
     assert content.hourly_rows[1][:3] == ["16:33-17:03", "30.0", "3601"]
 
 
@@ -175,7 +178,7 @@ def test_hourly_table_uses_elapsed_labels_without_a_start_time():
 def test_hourly_table_blanks_rates_for_an_hour_with_too_few_beats():
     beats = _steady(7200, 0.5) + [_beat(3700.0, 100.5, "N")]
     rows = build_content(beats, summarize(beats), None).hourly_rows
-    assert rows[1] == ["1:00-1:01", "1.7", "1", "-", "-", "-", "0", "0", "0", "1"]
+    assert rows[1] == ["1:00-1:01", "1.7", "1", "-", "-", "-", "0", "0", "0", "0", "1"]
 
 
 def test_hourly_table_empty_for_no_beats():
@@ -437,3 +440,59 @@ def test_hourly_strips_are_capped_and_the_heading_says_so():
 
 def test_primer_explains_the_hourly_strips():
     assert any("every hour" in line for line in HOW_TO_READ_STRIPS)
+
+
+# --- ventricular escape beats -------------------------------------------------
+
+
+def _with_escape():
+    """8 normals at 0.8 s, then a wide beat after 2.0 s, then a normal."""
+    beats = _steady(8, 0.8)
+    t = beats[-1].time
+    return beats + [_beat(t + 2.0, 2.0, "E", qrs=0.14), _beat(t + 2.8, 0.8, "N")]
+
+
+def test_ectopy_panel_counts_escape_beats_apart_from_pvcs():
+    beats = _with_escape()
+    rows = _rows(build_content(beats, summarize(beats), None), "Ventricular ectopy")
+    assert rows["PVCs"].value == "0 (0.00%)"
+    assert rows["Escape beats"] == SummaryRow("Escape beats", "1", "wide, RR >= 1.5x local")
+
+
+def test_hourly_header_has_an_escapes_column_after_runs():
+    beats = _with_escape()
+    content = build_content(beats, summarize(beats), None)
+    assert content.hourly_header[content.hourly_header.index("Runs (3+)") + 1] == "Escapes"
+    assert content.hourly_rows[0][content.hourly_header.index("Escapes")] == "1"
+
+
+def test_escape_section_comes_after_isolated_pvcs_and_before_the_hourly_strips():
+    beats = _with_escape()
+    beats = _with_run(beats, 3, 1, 0.5)
+    content = build_content(beats, summarize(beats), None)
+    assert [s.heading for s in content.sections] == [EXTREMES_TITLE, ISOLATED_TITLE, ESCAPE_TITLE, HOURLY_TITLE]
+    item = content.sections[2].items[0]
+    assert item.caption.title == "Escape beat 1 · t=8s"
+    assert [b.time for b in item.run] == [pytest.approx(7.6)]
+    assert item.caption.what == (
+        "The marked beat arrived 2.00 s after the beat before it (typical here 0.80 s) and its QRS lasts"
+        " 0.14 s (typical 0.08 s): wide and late is what makes it a ventricular escape beat."
+    )
+    assert "gap" in item.caption.significance and "cardiologist" in item.caption.significance
+    assert len(item.caption.significance) <= 105  # one caption line; a third line pushes the strip into the next slot
+    assert item.caption.status is None
+
+
+def test_escape_strips_are_capped_and_the_heading_says_so():
+    beats = _steady(8, 0.8)
+    t = beats[-1].time
+    for i in range(30):
+        beats.append(_beat(t + 2.0, 2.0, "E", qrs=0.14))
+        beats.append(_beat(t + 2.8, 0.8, "N"))
+        t += 2.8
+    section = next(s for s in build_content(beats, summarize(beats), None).sections if s.heading.startswith(ESCAPE_TITLE))
+    assert section.heading == f"{ESCAPE_TITLE} (24 of 30 shown, evenly spaced through the recording)"
+
+
+def test_primer_explains_the_escape_label():
+    assert any("E for" in line for line in HOW_TO_READ_STRIPS)

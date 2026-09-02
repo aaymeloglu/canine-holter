@@ -118,3 +118,9 @@ def test_widened_strip_keeps_every_mark_on_the_waveform():
     xs = sorted(p.get_x() for p in axes[0].patches)
     assert abs(xs[0] - (1.0 - 0.08)) < 1e-6 and abs(xs[1] - (19.0 - 0.08)) < 1e-6
     plt.close(fig)
+
+
+def test_escape_beats_are_labelled_e():
+    from canine_holter.report.strip import _beat_label
+    assert _beat_label(Beat(time=1.0, rr_interval=2.0, qrs_duration=0.14, label="E")) == "E"
+    assert _beat_label(Beat(time=1.0, rr_interval=2.0, qrs_duration=0.14, label="X")) == "?"
