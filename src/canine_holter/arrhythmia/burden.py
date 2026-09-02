@@ -13,6 +13,7 @@ SUSTAINED_EVENT_MIN_BEATS = 3  # consecutive beats needed to call it "sustained"
 HR_EXTREME_WINDOW_BEATS = 5  # min/max HR are medians over this many RRs, so one phantom beat can't set them
 MIN_RUN_BEATS = 3  # triplets and longer; a couplet has only one within-run RR
 HOUR_SEC = 3600.0
+MIN_SUCCESSIVE_DIFFERENCES = 2  # under this, variability is one number's noise
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,18 @@ class HeartRateStats:
     mean_bpm: float
     max_bpm: float
     max_time: float
+
+
+@dataclass(frozen=True)
+class HeartRateVariability:
+    """Time-domain variability of the NN intervals: RRs between consecutive
+    normal beats. A successive difference is between the NN intervals of
+    two consecutive beats, so a PVC, an unmeasured beat, or a quality-gate
+    boundary breaks the chain rather than contributing a false jump."""
+    sdnn_ms: float
+    rmssd_ms: float
+    pnn50_pct: float
+    nn_intervals: int
 
 
 @dataclass(frozen=True)
@@ -70,6 +83,7 @@ class ArrhythmiaSummary:
     pauses: list[float]
     longest_pause_sec: float | None = None  # longest RR interval in the recording
     heart_rate: HeartRateStats | None = None  # None when too few RRs for a window
+    heart_rate_variability: HeartRateVariability | None = None  # None with too few NN intervals
     longest_run: RunStats | None = None  # most beats; earliest on a tie
     fastest_run: RunStats | None = None  # highest bpm; earliest on a tie
     hourly: list[HourRow] = field(default_factory=list)
@@ -123,6 +137,33 @@ def heart_rate_stats(beats: list[Beat]) -> HeartRateStats | None:
         mean_bpm=60.0 / float(rr.mean()),
         max_bpm=60.0 / float(window_rr[fastest]),
         max_time=float(centers[fastest]),
+    )
+
+
+def _nn_intervals(beats: list[Beat]) -> list[float | None]:
+    """Per beat, its NN interval in seconds: the RR of a normal beat whose
+    predecessor is normal; None otherwise."""
+    return [
+        b.rr_interval if i > 0 and b.label == "N" and beats[i - 1].label == "N" and b.rr_interval else None
+        for i, b in enumerate(beats)
+    ]
+
+
+def heart_rate_variability(beats: list[Beat]) -> HeartRateVariability | None:
+    """SDNN, RMSSD, and pNN50 over the NN intervals, or None with fewer
+    than MIN_SUCCESSIVE_DIFFERENCES successive differences."""
+    nn = _nn_intervals(beats)
+    values = np.array([v for v in nn if v is not None]) * 1000.0
+    diffs = np.array(
+        [nn[i] - nn[i - 1] for i in range(1, len(nn)) if nn[i] is not None and nn[i - 1] is not None]
+    ) * 1000.0
+    if len(diffs) < MIN_SUCCESSIVE_DIFFERENCES:
+        return None
+    return HeartRateVariability(
+        sdnn_ms=float(values.std()),
+        rmssd_ms=float(np.sqrt(np.mean(diffs**2))),
+        pnn50_pct=float(np.mean(np.abs(diffs) > 50.0) * 100.0),
+        nn_intervals=len(values),
     )
 
 
@@ -275,6 +316,7 @@ def summarize(
         pauses=pauses,
         longest_pause_sec=longest_pause_sec,
         heart_rate=heart_rate_stats(beats),
+        heart_rate_variability=heart_rate_variability(beats),
         longest_run=longest_run,
         fastest_run=fastest_run,
         hourly=hourly_rows(beats, duration_sec, quality),

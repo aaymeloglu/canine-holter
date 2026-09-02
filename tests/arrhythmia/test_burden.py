@@ -355,3 +355,45 @@ def test_summary_empty_beats_with_quality_still_reports_duration():
     s = summarize([], quality=SignalQuality(120.0, ((0.0, 120.0),)))
     assert (s.duration_sec, s.analyzed_sec, s.total_beats) == (120.0, 0.0, 0)
     assert [(r.start_sec, r.end_sec, r.beats, r.analyzed_sec) for r in s.hourly] == [(0.0, 120.0, 0, 0.0)]
+
+
+# --- heart-rate variability ---------------------------------------------------
+import pytest  # noqa: E402
+from canine_holter.arrhythmia.burden import heart_rate_variability  # noqa: E402
+
+
+def _chain(rrs, labels=None):
+    """Beats at cumulative times from a list of RRs (the first beat has none)."""
+    labels = labels or ["N"] * len(rrs)
+    t, beats = 0.0, []
+    for rr, label in zip(rrs, labels):
+        t += rr or 0.0
+        beats.append(_beat(t, rr, label))
+    return beats
+
+
+def test_hrv_sdnn_rmssd_pnn50_from_literal_nn_intervals():
+    hrv = heart_rate_variability(_chain([None, 0.8, 0.9, 0.8, 1.0, 1.04]))
+    # NN = 800, 900, 800, 1000, 1040 ms: mean 908, population SD sqrt(9856)
+    assert hrv.nn_intervals == 5
+    assert hrv.sdnn_ms == pytest.approx(99.277, abs=0.01)
+    # successive differences 100, -100, 200, 40: RMS sqrt(15400); three of four over 50 ms
+    assert hrv.rmssd_ms == pytest.approx(124.097, abs=0.01)
+    assert hrv.pnn50_pct == pytest.approx(75.0)
+
+
+def test_hrv_skips_a_pvc_its_follower_and_the_first_beat():
+    beats = _chain([None, 0.8, 0.5, 1.1, 0.8, 0.8, 0.8], ["N", "N", "V", "N", "N", "N", "N"])
+    hrv = heart_rate_variability(beats)
+    # The 0.5 (V) and the 1.1 (after a V) are not NN; the chain restarts at the 0.8s.
+    assert hrv.nn_intervals == 4
+    assert (hrv.sdnn_ms, hrv.rmssd_ms, hrv.pnn50_pct) == (0.0, 0.0, 0.0)
+
+
+def test_hrv_is_none_with_fewer_than_two_successive_differences():
+    assert heart_rate_variability(_chain([None, 0.8, 0.9])) is None
+    assert heart_rate_variability([]) is None
+
+
+def test_summary_carries_hrv():
+    assert summarize(_chain([None, 0.8, 0.9, 0.8])).heart_rate_variability.nn_intervals == 3
