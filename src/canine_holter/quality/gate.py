@@ -25,6 +25,7 @@ EDGE_SEC = 60.0  # hookup and removal; the HE/LX vendor software calls the first
 BRIDGE_SEC = 30.0  # excluded windows this close are one span: quiet stretches inside an off-body tail are not ECG either
 PAD_SEC = 2.0  # beats right at a span's edge are half-buried in noise
 TAIL_MIN_RUN_SEC = 1800.0  # a lead-off run this long is the recorder off the body, not a loose electrode; a shorter off-body tail stays excluded time inside the duration
+REMOVAL_GAP_SEC = 300.0  # walking back from the tail, excluded windows separated by less than this much analyzable signal are the patch coming off, not ECG: two leads are already open while the third still passes the amplitude rules, and the beats they cannot agree on would read as a pause
 TAIL_LEAD_OFF_FRACTION = 0.9  # share of the windows from the tail's start to the end that must be lead-off: transit noise and handling before the card comes out pass the amplitude rules for up to 44 min at a stretch, so the tail is judged whole, not gap by gap
 
 
@@ -59,7 +60,8 @@ def assess_quality(samples: np.ndarray, sample_rate: float) -> SignalQuality:
     peak-to-peak) is excluded whole rather than analyzed as flat. The
     remainder after the last full window needs no rule: the last-minute
     edge span always covers it. A trailing off-body region (see
-    _tail_start) is trimmed: the recording ends where it starts and
+    _tail_start), with the removal minutes leading into it
+    (_removal_start), is trimmed: the recording ends where it starts and
     trimmed_sec says how much was dropped."""
     recorded = len(samples) / sample_rate
     if recorded == 0:
@@ -83,6 +85,8 @@ def assess_quality(samples: np.ndarray, sample_rate: float) -> SignalQuality:
         | (ptp < MIN_AMPLITUDE_RATIO * median)
     )
     kept = _tail_start(lead_off)
+    if kept < n:
+        kept = _removal_start(bad, kept)
     duration = recorded if kept == n else kept * WINDOW_SEC
     spans = [
         (max(0.0, i * WINDOW_SEC - PAD_SEC), min(duration, (i + 1) * WINDOW_SEC + PAD_SEC))
@@ -118,6 +122,22 @@ def _tail_start(lead_off: np.ndarray) -> int:
         if end - start >= min_run and remaining[start] >= TAIL_LEAD_OFF_FRACTION * (n - start):
             return start
     return n
+
+
+def _removal_start(bad: np.ndarray, tail_start: int) -> int:
+    """Move the tail's start back over the excluded windows leading into
+    it, crossing analyzable gaps shorter than REMOVAL_GAP_SEC."""
+    max_gap = REMOVAL_GAP_SEC / WINDOW_SEC
+    start = tail_start
+    gap = 0
+    for i in range(tail_start - 1, -1, -1):
+        if bad[i]:
+            start, gap = i, 0
+        else:
+            gap += 1
+            if gap >= max_gap:
+                break
+    return start
 
 
 def _bridge(spans: list[tuple[float, float]]) -> tuple[tuple[float, float], ...]:

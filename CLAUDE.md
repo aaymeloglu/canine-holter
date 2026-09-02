@@ -22,7 +22,7 @@ ingest → quality → detection → classify → arrhythmia → report
 
 - `ingest/`: supported files become a `Recording`. `loader.load_recording()` routes WFDB records, native DR200 `flash.dat`, and vendor-extracted `flashcN.dat`/`.raw` channels.
 - `quality/gate.py`: returns recording duration, excluded artifact spans, and the length of any trimmed off-body tail. `exclude_beats()` drops beats inside those spans and resets the first RR afterward so artifact cannot become a pause, run, or rate event. The lead-off rule catches the DR400's open-electrode tone (a square wave at half the sample rate) and the amplitude median ignores tone and flat windows. Kurtosis and spectral-noise rules were rejected because they excluded ventricular flutter/VT; read the signal-quality spec before adding a noise rule.
-- `detection/detect.py`: NeuroKit2 R-peak detection plus custom QRS width measurement. Its amplitude window must cover the whole ±150 ms QRS search range. Rate-gated search-back and T-wave rejection address separate, locally gated failure modes. Extend the hand-counted Teeny fixtures before retuning thresholds.
+- `detection/detect.py`: NeuroKit2 R-peak detection per lead, lead agreement (a beat needs two leads within 100 ms; its QRS width is the median of the per-lead widths, each measured at that lead's own peak), plus custom QRS width measurement. Its amplitude window must cover the whole ±150 ms QRS search range. Rate-gated search-back and T-wave rejection address separate, locally gated failure modes. Extend the hand-counted Teeny fixtures before retuning thresholds.
 - `classify/rules.py`: causal rolling-baseline rules. A PVC must be both premature and wide. The sequential loop is intentional; future beats must never influence the current beat.
 - `arrhythmia/burden.py`: produces `ArrhythmiaSummary`, including burden, runs, pauses, rate events, heart-rate statistics, quality accounting, and hourly rows.
 - `report/`: builds plain `ReportContent`, then renders `report.pdf`. Reports include the disclaimer, reference bands, quality accounting, timeline, hourly table, and reviewable ECG strips. Strip caps must always be stated.
@@ -32,7 +32,7 @@ Detailed rationale, measurements, rejected approaches, and acceptance evidence l
 
 ## Data contracts
 
-`Recording(samples, sample_rate, start_time, source, channels=None, channel_names=())` is frozen with `eq=False`. `samples` is the one-dimensional analysis lead. `channels`, when present, contains every display lead with shape `(n_channels, n_samples)`. Detection, quality, and classification only consume `samples`; extra channels are for report strips. Keep the channel array aligned with `samples`.
+`Recording(samples, sample_rate, start_time, source, channels=None, channel_names=())` is frozen with `eq=False`. `samples` is the one-dimensional lead that quality gating judges. `channels`, when present, contains every lead with shape `(n_channels, n_samples)`; detection runs on all of them and keeps the beats at least two leads agree on, and the report draws them. A single-lead input is detected on `samples`. Keep the channel array aligned with `samples`.
 
 `Beat(time, rr_interval, qrs_duration, label)` is frozen. Labels are `None` before classification, `"N"`, `"V"`, or `"U"`.
 
@@ -100,4 +100,4 @@ The GUI ships through GitHub Releases as a signed/notarized macOS app and an uns
 - Pacemaker handling is format-faithful but only synthetically tested.
 - Detection/classification and brady/tachy/pause thresholds remain provisional.
 - Quality gating catches severe artifact and the first/last minute, but not all moderate or normal-amplitude hash noise. Do not add kurtosis or template-correlation SQI without new evidence; existing specs document why they failed.
-- The current single-lead detector still produces false PVCs in the lying-down posture because the QRS axis shifts to another channel. Multi-lead detection is the structural fix, and the `lying_t` fixture is its pending acceptance case.
+- Lead agreement removes one lead's T-wave and P-wave detections and its posture-shifted widths, but a noise burst or a T wave that every lead detects as a beat still reads as a PVC.
