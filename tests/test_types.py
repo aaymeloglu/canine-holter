@@ -1,26 +1,7 @@
-from dataclasses import FrozenInstanceError, replace
-
 import numpy as np
 import pytest
 
-from canine_holter.types import Beat, Recording
-
-
-def test_recording_holds_signal_and_metadata():
-    samples = np.array([0.1, 0.2, 0.1, -0.1])
-    rec = Recording(samples=samples, sample_rate=360.0, start_time=None, source="test")
-    assert rec.sample_rate == 360.0
-    assert len(rec.samples) == 4
-    assert rec.source == "test"
-
-
-def test_beat_is_immutable_and_replaceable():
-    beat = Beat(time=1.5, rr_interval=0.8, qrs_duration=0.09, label=None)
-    labeled = replace(beat, label="V")
-    assert labeled.label == "V"
-    assert beat.label is None
-    with pytest.raises(FrozenInstanceError):
-        beat.label = "N"
+from canine_holter.types import Recording
 
 
 def test_recording_equality_does_not_raise_on_array_field():

@@ -70,13 +70,13 @@ def test_loads_native_flash_delta_encoding_and_metadata(tmp_path):
     encoded[:4, 1] = [2, 14, 5, 11]  # +3, -3, +21, -21 counts
     write_native_flash(path, encoded)
 
-    rec = load_native_flash(path, channel=1)
+    rec = load_native_flash(path)
 
     assert rec.sample_rate == 180.0
     assert rec.start_time == datetime(2010, 7, 8, 11, 12, 50)
     assert rec.source == str(path)
     assert len(rec.samples) == 304
-    np.testing.assert_allclose(rec.samples[:5], [0.0375, 0.0, 0.2625, 0.0, 0.0])
+    np.testing.assert_allclose(rec.channels[1][:5], [0.0375, 0.0, 0.2625, 0.0, 0.0])
 
 
 def test_native_flash_decodes_full_delta_table_against_unpackdc_ground_truth(tmp_path):
@@ -87,7 +87,7 @@ def test_native_flash_decodes_full_delta_table_against_unpackdc_ground_truth(tmp
     encoded[: len(codes), 0] = codes
     write_native_flash(tmp_path / "flash.dat", encoded)
 
-    rec = load_native_flash(tmp_path / "flash.dat", channel=0)
+    rec = load_native_flash(tmp_path / "flash.dat")
 
     expected_counts = [1, 4, 10, 22, 43, 81, 151, 150, 147, 141, 129, 108, 70, 0]
     expected_mv = np.array(expected_counts, dtype=float) * 0.0125
@@ -227,14 +227,6 @@ def test_native_flash_rejects_non_numeric_sample_rate(tmp_path):
         load_native_flash(path)
 
 
-def test_native_flash_rejects_invalid_channel_index(tmp_path):
-    path = tmp_path / "flash.dat"
-    encoded = np.zeros((304, 3), dtype=np.uint8)
-    write_native_flash(path, encoded)
-    with pytest.raises(ValueError, match="channel must be 0, 1, or 2"):
-        load_native_flash(path, channel=3)
-
-
 def test_native_flash_rejects_misaligned_pacemaker_marker(tmp_path):
     # Nibble 8 is documented as a simultaneous marker on all three channels;
     # a marker on only one channel means the stream is misframed, so fail
@@ -313,7 +305,6 @@ def test_native_flash_decodes_all_three_channels(tmp_path):
     np.testing.assert_allclose(rec.channels[1][:3], [0.0125, 0.05, 0.125])
     np.testing.assert_allclose(rec.channels[2][:2], [-0.0125, -0.05])
     np.testing.assert_allclose(rec.samples, rec.channels[0])
-    np.testing.assert_allclose(load_native_flash(path, channel=1).samples, rec.channels[1])
 
 
 def _ramp_block(step_code: int, **kwargs) -> bytes:

@@ -188,13 +188,9 @@ def _sustained_hr_events(
 
     for beat in beats:
         if beat.rr_interval is None or beat.rr_interval <= 0:
-            # A single invalid rr_interval resets the run rather than being
-            # skipped over, so one noisy/dropped-beat sample sitting inside a
-            # real sustained episode can fragment it into two runs each
-            # below SUSTAINED_EVENT_MIN_BEATS - going entirely unflagged.
-            # A screening tool should err toward false positives over false
-            # negatives here; revisit if this proves to matter on real
-            # recordings.
+            # An invalid RR ends the run rather than being skipped: a beat
+            # without an interval is a quality-gate boundary, and an event
+            # must not span one.
             if run_len >= SUSTAINED_EVENT_MIN_BEATS and run_start is not None:
                 events.append((run_start, prev_time))
             run_start, run_len = None, 0

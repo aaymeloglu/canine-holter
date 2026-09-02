@@ -33,11 +33,6 @@ FOOTER_LINES = [  # kept under ~105 characters each: they print at 8 pt across t
 ]
 
 
-def format_duration(duration_sec: float) -> str:
-    hours, rem = divmod(int(duration_sec), 3600)
-    return f"{hours}h {rem // 60}m"
-
-
 def pvc_per_24h(pvc_count: int, analyzed_sec: float) -> float | None:
     """PVC count scaled to 24 h of analyzed time, or None when fewer than
     MIN_HOURS_FOR_24H_SCALING hours were analyzed."""

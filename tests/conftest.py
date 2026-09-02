@@ -1,5 +1,5 @@
 import pytest
-import canine_holter.report.generate as generate
+import canine_holter.report.pdf as pdf
 
 
 @pytest.fixture
@@ -9,7 +9,7 @@ def report_text(monkeypatch):
     tests check the content handed to write_pdf and still let the real PDF
     be written."""
     captured = {}
-    real = generate.write_pdf
+    real = pdf.write_pdf
 
     def spy(out_path, *, content, **kw):
         lines = []
@@ -20,7 +20,7 @@ def report_text(monkeypatch):
         captured["text"] = "\n".join(
             lines
             + content.footer_lines
-            + [line for s in content.sections for line in [s.heading, *(item.label for item in s.items)]]
+            + [s.heading for s in content.sections]
             + [
                 line
                 for s in content.sections
@@ -31,5 +31,5 @@ def report_text(monkeypatch):
         )
         return real(out_path, content=content, **kw)
 
-    monkeypatch.setattr(generate, "write_pdf", spy)
+    monkeypatch.setattr(pdf, "write_pdf", spy)
     return lambda: captured["text"]

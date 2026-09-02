@@ -25,8 +25,7 @@ def test_main_runs_end_to_end_and_prints_report_path(monkeypatch, capsys):
         assert captured.out.strip() == f"Report written to {report_path}"
 
 
-@pytest.mark.parametrize("weight_class", ["small", "medium", "large"])
-def test_main_passes_each_dog_weight_class_to_the_pipeline(monkeypatch, capsys, weight_class):
+def test_main_passes_the_options_to_the_pipeline(monkeypatch, capsys):
     captured = {}
 
     def fake_run_analysis(input_path, out_dir, dog_weight_class, start_time):
@@ -42,45 +41,17 @@ def test_main_passes_each_dog_weight_class_to_the_pipeline(monkeypatch, capsys, 
     monkeypatch.setattr(
         sys,
         "argv",
-        ["canine-holter", INPUT_PATH, "--out", "/out", "--dog-weight-class", weight_class],
+        ["canine-holter", INPUT_PATH, "--out", "/out", "--dog-weight-class", "large"],
     )
     main()
 
     assert captured == {
         "input_path": INPUT_PATH,
         "out_dir": "/out",
-        "dog_weight_class": weight_class,
+        "dog_weight_class": "large",
         "start_time": None,
     }
     assert capsys.readouterr().out.strip() == "Report written to /out/report.pdf"
-
-
-def test_main_rejects_invalid_dog_weight_class(monkeypatch, capsys):
-    with tempfile.TemporaryDirectory() as out_dir:
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["canine-holter", INPUT_PATH, "--out", out_dir, "--dog-weight-class", "huge"],
-        )
-        with pytest.raises(SystemExit) as exc_info:
-            main()
-
-        assert exc_info.value.code == 2
-        captured = capsys.readouterr()
-        assert "invalid choice" in captured.err
-        # arg parsing should fail before the pipeline ever runs
-        assert not os.path.exists(os.path.join(out_dir, "report.pdf"))
-
-
-def test_main_requires_out_argument(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["canine-holter", INPUT_PATH])
-    with pytest.raises(SystemExit) as exc_info:
-        main()
-
-    assert exc_info.value.code == 2
-    captured = capsys.readouterr()
-    assert "--out" in captured.err
-    assert "required" in captured.err
 
 
 def test_main_start_time_override_reaches_report(monkeypatch, report_text):

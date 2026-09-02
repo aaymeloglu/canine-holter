@@ -1,8 +1,8 @@
-"""Turns labeled beats + summary into the report content (plain data) and
-writes it as report.pdf - the only output file."""
-import os
+"""Everything the report says, as plain data (ReportContent), built from the
+labeled beats and their summary. pdf.py lays it out."""
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import TypeVar
 import numpy as np
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import (
@@ -16,21 +16,6 @@ from canine_holter.arrhythmia.burden import (
     run_stats,
 )
 from canine_holter.classify.rules import BASELINE_WINDOW
-from canine_holter.report.common import (
-    EVENTS_TITLE,
-    EXTREMES_TITLE,
-    ISOLATED_TITLE,
-    MAX_STRIPS_PER_SECTION,
-    event_line,
-    flagged_runs,
-    format_time,
-    isolated_pvcs,
-    pvc_line,
-    section_heading,
-    select_evenly,
-    short_time,
-)
-from canine_holter.report.pdf import write_pdf
 from canine_holter.report.reference import (
     ANALYZED_BAND,
     COUNT_BAND,
@@ -41,12 +26,56 @@ from canine_holter.report.reference import (
     RUN_RATE_BAND,
     analyzed_status,
     count_status,
-    format_duration,
     pause_status,
     pvc_24h_status,
     pvc_per_24h,
     run_rate_status,
 )
+
+REPORT_TITLE = "Holter Analysis Report"
+DISCLAIMER = "This is a screening aid, not a diagnosis. Review with a veterinary cardiologist."
+MAX_STRIPS_PER_SECTION = 24  # 12 PDF pages at 2 strips/page; never a silent cap
+EXTREMES_TITLE = "Heart-rate extremes, longest pause, fastest run"
+EVENTS_TITLE = "Flagged events (couplets, triplets, VT runs)"
+ISOLATED_TITLE = "Isolated PVCs"
+HOURLY_HEADER = [
+    "Hour", "Analyzed (min)", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets",
+    f"Runs ({MIN_RUN_BEATS}+)", "Pauses",
+]
+FASTEST_HR_SIGNIFICANCE = "Fast rates during play or excitement are expected; a rate this fast at rest is not."
+SLOWEST_HR_SIGNIFICANCE = "Resting dogs commonly slow to this (sinus arrhythmia)."
+PAUSE_SIGNIFICANCE = {
+    "ok": "Under 2.5 s: within the usual range for a resting dog.",
+    "caution": "Between 2.5 and 5 s: common in resting dogs with sinus arrhythmia.",
+    "alert": "Over 5 s, or any pause with fainting or collapse: worth a cardiologist's review.",
+}
+HOW_TO_READ_TITLE = "How to read the strips that follow"
+HOW_TO_READ_STRIPS = [  # under 100 characters a line: they print at 10 pt across the page
+    "Each strip is a few seconds of the dog's ECG drawn on standard ECG paper: 25 mm per second and",
+    "10 mm per millivolt unless the strip says otherwise. Every small square is 0.04 s; every large",
+    "square (5 small) is 0.2 s. Five large squares are one second.",
+    "",
+    "The three rows are the same heartbeats recorded from three angles (the recorder's three",
+    "channels). A beat that appears in all three rows is real; a spike in only one is usually",
+    "movement or a loose electrode.",
+    "",
+    "Above the top row every detected beat has a label: N for a normal beat, V for a beat the",
+    "software calls a PVC (premature ventricular complex), ? when it could not measure the beat.",
+    "The beats each strip is about are shaded red, and the time from the previous beat to the",
+    "shaded beat, and from it to the next, is printed in seconds.",
+    "",
+    "A PVC is a beat with a different shape from its neighbours (usually wider) that arrives early",
+    "and is usually followed by a longer gap. That is what to look for when checking a V label.",
+    "One PVC on its own is common in healthy dogs; what matters is the total per 24 h (page 1).",
+    "",
+    "Under each strip's title: what the strip shows, with the measurements behind the label, and",
+    "whether it matters, judged against the same published bands as page 1 (green / amber / red).",
+    "",
+    "The labels are the software's provisional calls, not a cardiologist's. The strips are here so",
+    "that a reader - or the cardiologist - can check them.",
+]
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -78,16 +107,19 @@ class StripCaption:
 
 @dataclass(frozen=True)
 class StripItem:
-    """One rhythm strip and the text/annotation rendered with it."""
+    """One rhythm strip: the beats it is about, its caption, and the gap
+    to bracket when it shows a pause."""
     run: list[Beat]
-    label: str
     caption: StripCaption
     pause: tuple[float, float] | None = None
+
+    @property
+    def center_time(self) -> float:
+        return (self.run[0].time + self.run[-1].time) / 2
 
 
 @dataclass(frozen=True)
 class StripSection:
-    """One capped section of rhythm strips."""
     heading: str
     items: list[StripItem]
 
@@ -95,17 +127,44 @@ class StripSection:
 @dataclass(frozen=True)
 class ReportContent:
     """Everything textual in the report, independent of how it is rendered."""
+    title: str
+    disclaimer: str
     summary_groups: list[SummaryGroup]
     footer_lines: list[str]
+    primer_title: str
+    primer_lines: list[str]
     sections: list[StripSection]
     hourly_header: list[str]
     hourly_rows: list[list[str]]  # one row of cells per HourRow, in HOURLY_HEADER order
 
 
-HOURLY_HEADER = [
-    "Hour", "Analyzed (min)", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets",
-    f"Runs ({MIN_RUN_BEATS}+)", "Pauses",
-]
+def format_duration(duration_sec: float) -> str:
+    hours, rem = divmod(int(duration_sec), 3600)
+    return f"{hours}h {rem // 60}m"
+
+
+def short_time(elapsed_sec: float, start_time: datetime | None) -> str:
+    """Clock time when the recording start is known, else elapsed seconds."""
+    if start_time is None:
+        return f"t={elapsed_sec:.0f}s"
+    return (start_time + timedelta(seconds=elapsed_sec)).strftime("%H:%M:%S")
+
+
+def select_evenly(items: list[T], max_n: int) -> list[T]:
+    """All of items if there are at most max_n, else max_n of them spread
+    evenly from first to last: a fair sample of a long recording rather
+    than its first few minutes."""
+    if len(items) <= max_n:
+        return list(items)
+    step = (len(items) - 1) / (max_n - 1)
+    return [items[round(i * step)] for i in range(max_n)]
+
+
+def _sec(value: float | None) -> str:
+    return f"{value:.2f} s" if value is not None else "n/a"
+
+
+# --- summary panels -----------------------------------------------------------
 
 
 def _hour_label(row: HourRow, start_time: datetime | None) -> str:
@@ -227,23 +286,12 @@ def summary_groups(summary: ArrhythmiaSummary, start_time: datetime | None) -> l
     ]
 
 
-ISOLATED_SIGNIFICANCE = ""  # said once in the primer (common.HOW_TO_READ_STRIPS), not under every strip
-FASTEST_HR_SIGNIFICANCE = "Fast rates during play or excitement are expected; a rate this fast at rest is not."
-SLOWEST_HR_SIGNIFICANCE = "Resting dogs commonly slow to this (sinus arrhythmia)."
-PAUSE_SIGNIFICANCE = {
-    "ok": "Under 2.5 s: within the usual range for a resting dog.",
-    "caution": "Between 2.5 and 5 s: common in resting dogs with sinus arrhythmia.",
-    "alert": "Over 5 s, or any pause with fainting or collapse: worth a cardiologist's review.",
-}
-
-
-def _sec(value: float | None) -> str:
-    return f"{value:.2f} s" if value is not None else "n/a"
+# --- strips -------------------------------------------------------------------
 
 
 def _typical(beats: list[Beat], index: int) -> tuple[float | None, float | None]:
     """Median RR and QRS of the up-to-BASELINE_WINDOW normal beats before
-    index - the same baseline the classifier compared the beat with."""
+    index: the same baseline the classifier compared the beat with."""
     previous = [
         b for b in beats[max(0, index - 5 * BASELINE_WINDOW) : index]
         if b.label == "N" and b.rr_interval and b.qrs_duration
@@ -269,7 +317,8 @@ def _pvc_caption(index: int, run: list[Beat], beats: list[Beat], start_time: dat
             f" {_sec(typical_rr)}) and its QRS lasts {_sec(beat.qrs_duration)} (typical {_sec(typical_qrs)}):"
             " early and wide is what makes it a PVC."
         )
-        return StripCaption(f"Isolated PVC {index + 1} · {when}", what, ISOLATED_SIGNIFICANCE)
+        # A lone PVC is common; the primer says so once rather than every strip.
+        return StripCaption(f"Isolated PVC {index + 1} · {when}", what, "")
     if n < 4:
         rrs = " and ".join(_sec(b.rr_interval) for b in run)
         qrss = " and ".join(_sec(b.qrs_duration) for b in run)
@@ -301,19 +350,18 @@ def _run_significance(n: int, bpm: float | None) -> tuple[str, str]:
     )
 
 
-def _section(title: str, runs: list[list[Beat]], labeler, beats: list[Beat], start_time: datetime | None) -> StripSection | None:
+def _section(title: str, runs: list[list[Beat]], beats: list[Beat], start_time: datetime | None) -> StripSection | None:
+    """A capped section of PVC runs, with the cap spelled out in the heading
+    whenever it applied."""
     if not runs:
         return None
     shown = select_evenly(runs, MAX_STRIPS_PER_SECTION)
-    items = [
-        StripItem(
-            run=run,
-            label=labeler(i, run, start_time),
-            caption=_pvc_caption(i, run, beats, start_time),
-        )
-        for i, run in enumerate(shown)
-    ]
-    return StripSection(section_heading(title, len(shown), len(runs)), items)
+    heading = title if len(shown) == len(runs) else (
+        f"{title} ({len(shown)} of {len(runs)} shown, evenly spaced through the recording)"
+    )
+    return StripSection(heading, [
+        StripItem(run, _pvc_caption(i, run, beats, start_time)) for i, run in enumerate(shown)
+    ])
 
 
 def _beat_at(beats: list[Beat], time: float) -> Beat:
@@ -337,35 +385,23 @@ def _extremes_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time:
         return None
     window = f"{HR_EXTREME_WINDOW_BEATS} beats"
     items = [
-        StripItem(
-            run=[_beat_at(beats, hr.max_time)],
-            label=f"Fastest heart rate: {hr.max_bpm:.0f} bpm at {format_time(hr.max_time, start_time)}",
-            caption=StripCaption(
-                f"Fastest heart rate · {short_time(hr.max_time, start_time)}",
-                f"{hr.max_bpm:.0f} bpm averaged over {window}.",
-                FASTEST_HR_SIGNIFICANCE,
-            ),
-        ),
-        StripItem(
-            run=[_beat_at(beats, hr.min_time)],
-            label=f"Slowest heart rate: {hr.min_bpm:.0f} bpm at {format_time(hr.min_time, start_time)}",
-            caption=StripCaption(
-                f"Slowest heart rate · {short_time(hr.min_time, start_time)}",
-                f"{hr.min_bpm:.0f} bpm averaged over {window}; the gaps between beats are printed in seconds.",
-                SLOWEST_HR_SIGNIFICANCE,
-            ),
-        ),
+        StripItem([_beat_at(beats, hr.max_time)], StripCaption(
+            f"Fastest heart rate · {short_time(hr.max_time, start_time)}",
+            f"{hr.max_bpm:.0f} bpm averaged over {window}.",
+            FASTEST_HR_SIGNIFICANCE,
+        )),
+        StripItem([_beat_at(beats, hr.min_time)], StripCaption(
+            f"Slowest heart rate · {short_time(hr.min_time, start_time)}",
+            f"{hr.min_bpm:.0f} bpm averaged over {window}; the gaps between beats are printed in seconds.",
+            SLOWEST_HR_SIGNIFICANCE,
+        )),
     ]
     if summary.pauses:
         pause = _pause_beats(beats, summary)
         status = pause_status(summary.longest_pause_sec)
         items.append(StripItem(
-            run=pause,
-            label=(
-                f"Longest pause: {summary.longest_pause_sec:.2f} s, ending at "
-                f"{format_time(pause[-1].time, start_time)}"
-            ),
-            caption=StripCaption(
+            pause,
+            StripCaption(
                 f"Longest pause · {short_time(pause[-1].time, start_time)}",
                 f"No beat for {summary.longest_pause_sec:.2f} s.",
                 PAUSE_SIGNIFICANCE[status],
@@ -376,16 +412,12 @@ def _extremes_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time:
     if summary.fastest_run is not None:
         run = next(r for r in pvc_runs(beats) if r[0].time == summary.fastest_run.start_time)
         caption = _pvc_caption(0, run, beats, start_time)
-        items.append(StripItem(
-            run=run,
-            label=f"Fastest run: {_run_text(summary.fastest_run, start_time)}",
-            caption=StripCaption(
-                f"Fastest run · {short_time(run[0].time, start_time)}",
-                caption.what,
-                caption.significance,
-                caption.status,
-            ),
-        ))
+        items.append(StripItem(run, StripCaption(
+            f"Fastest run · {short_time(run[0].time, start_time)}",
+            caption.what,
+            caption.significance,
+            caption.status,
+        )))
     return StripSection(EXTREMES_TITLE, items)
 
 
@@ -395,46 +427,20 @@ def build_content(beats: list[Beat], summary: ArrhythmiaSummary, start_time: dat
     the latter two capped at MAX_STRIPS_PER_SECTION with the cap stated in
     the heading), and the hourly table. Event times are wall-clock labels
     when start_time is known."""
+    runs = pvc_runs(beats)
     sections = [
         _extremes_section(beats, summary, start_time),
-        _section(EVENTS_TITLE, flagged_runs(beats), event_line, beats, start_time),
-        _section(ISOLATED_TITLE, isolated_pvcs(beats), pvc_line, beats, start_time),
+        _section(EVENTS_TITLE, [r for r in runs if len(r) >= 2], beats, start_time),
+        _section(ISOLATED_TITLE, [r for r in runs if len(r) == 1], beats, start_time),
     ]
     return ReportContent(
+        title=REPORT_TITLE,
+        disclaimer=DISCLAIMER,
         summary_groups=summary_groups(summary, start_time),
         footer_lines=list(FOOTER_LINES),
+        primer_title=HOW_TO_READ_TITLE,
+        primer_lines=HOW_TO_READ_STRIPS,
         sections=[s for s in sections if s is not None],
         hourly_header=HOURLY_HEADER,
         hourly_rows=_hourly_rows(summary, start_time),
     )
-
-
-def write_report(
-    beats: list[Beat],
-    summary: ArrhythmiaSummary,
-    out_dir: str,
-    samples: np.ndarray | None,
-    sample_rate: float | None,
-    start_time: datetime | None = None,
-    channels: np.ndarray | None = None,
-    channel_names: tuple[str, ...] = (),
-) -> str:
-    """Write report.pdf into out_dir and return its path. Nothing else is
-    written. Strips show every lead in channels, or the analysis lead alone
-    when only samples are given; without any waveform they are listed as
-    text."""
-    os.makedirs(out_dir, exist_ok=True)
-    pdf_path = os.path.join(out_dir, "report.pdf")
-    if channels is None and samples is not None:
-        channels, channel_names = samples[None, :], ("ECG",)
-    write_pdf(
-        pdf_path,
-        content=build_content(beats, summary, start_time),
-        beats=beats,
-        summary=summary,
-        start_time=start_time,
-        channels=channels,
-        channel_names=channel_names,
-        sample_rate=sample_rate,
-    )
-    return pdf_path
