@@ -114,20 +114,27 @@ recording is excluded whole, as today.
 
 ### Tail trimming
 
-After the per-window rules and before the edge rules. Lead-off runs of at
-least `LEAD_OFF_RUN_SEC = 300` are off-body stretches; a shorter run is a
-loose electrode during wear. Walking back from the end of the recording,
-off-body stretches separated by less than `TAIL_BRIDGE_SEC = 1800` of
-other signal are one tail (a package being handled in transit is not a
-re-attachment). The tail is trimmed when it is at least `TAIL_BRIDGE_SEC`
-long, measured from its start to the end of the recording; the recording
-then ends at the tail's start. The 30-minute floor keeps a vest slipping
-off in the last minutes as excluded time inside the duration, as today.
-An off-body hour followed by 30 minutes or more of wear is not a tail.
+After the per-window rules and before the edge rules. The tail starts at
+the earliest lead-off run of at least `TAIL_MIN_RUN_SEC = 1800` after
+which at least `TAIL_LEAD_OFF_FRACTION = 0.9` of the windows to the end of
+the recording are lead-off. The recording then ends at that run's start.
+The 30-minute run keeps a loose electrode, and a vest slipping off in the
+last minutes, as excluded time inside the duration, as today. The 90
+percent test keeps an off-body hour followed by a re-attached recorder
+inside the duration unless the tail after it is more than nine times
+longer; the report always states the trimmed time, so that case is
+visible rather than silent.
 
-On Teeny's DR400 file the tail starts at 24.76 h: a 24.6 h run, then runs
-separated by at most 22 minutes to the end. The on-body ECG ends at
-~24.5 h; the removal (rail-to-rail) minutes between stay excluded.
+The tail is judged whole rather than gap by gap because transit is not
+pure tone: on Teeny's file the package being handled produces
+amplitude-plausible, non-tone signal for up to 44 minutes at a stretch
+(hour 112) and for the final 32 minutes before the card came out, so any
+rule that bridges gaps by length or by analyzable time fails to reach the
+end of the recording. Rejected for that reason.
+
+On Teeny's DR400 file the tail starts at 24.76 h, a 24.6 h run, and
+94.8 percent of the remaining windows are lead-off. The on-body ECG ends
+at ~24.5 h; the removal (rail-to-rail) minutes between stay excluded.
 
 `SignalQuality` gains `trimmed_sec: float = 0.0`. `duration_sec` is the
 kept length; the recorder ran `duration_sec + trimmed_sec`. The edge rule
@@ -164,7 +171,8 @@ off-body tail trimmed`. Untrimmed reports are unchanged.
   unaffected by a majority-tone recording; the trimming rule on 60 min of
   ECG followed by 2 h of tone trims to 60 min, a 10 min tone tail is not
   trimmed, a 60 min tone gap followed by 60 min of ECG is not trimmed, a
-  10 min signal stretch inside the tail is bridged, and a 10 s tone blip
+  10 min signal stretch inside the tail is bridged, 15 min of signal at
+  the very end of a 3 h tail is still trimmed, and a 10 s tone blip
   during wear neither starts the tail nor moves it.
 - Pipeline and report: a trimmed recording's Duration row.
 - Acceptance: `flash2.dat` loads (266,289 blocks, 124.93 h, start

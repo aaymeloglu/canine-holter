@@ -165,6 +165,13 @@ def test_tail_bridges_brief_signal_between_lead_off_runs():
     assert (q.duration_sec, q.trimmed_sec) == (3600.0, 7800.0)
 
 
+def test_tail_survives_handling_noise_before_the_card_comes_out():
+    # 15 min of amplitude-plausible signal at the very end (the package
+    # opened, the recorder handled) is inside the tail, not a re-attachment.
+    q = assess_quality(np.concatenate([_sine(3600), _tone(10800), _sine(900)]), FS)
+    assert (q.duration_sec, q.trimmed_sec) == (3600.0, 11700.0)
+
+
 def test_brief_lead_off_blip_during_wear_does_not_move_the_tail():
     x = np.concatenate([_sine(3600), _tone(3600)])
     x[_at(1800, 1810)] = _tone(10)

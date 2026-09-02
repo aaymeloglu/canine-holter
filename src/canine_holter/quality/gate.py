@@ -24,8 +24,8 @@ MAX_DIFFERENCE_POWER_RATIO = 3.0  # variance of sample-to-sample differences ove
 EDGE_SEC = 60.0  # hookup and removal; the HE/LX vendor software calls the first and last minute artifact unconditionally
 BRIDGE_SEC = 30.0  # excluded windows this close are one span: quiet stretches inside an off-body tail are not ECG either
 PAD_SEC = 2.0  # beats right at a span's edge are half-buried in noise
-LEAD_OFF_RUN_SEC = 300.0  # a lead-off run this long is the recorder off the body; shorter is a loose electrode during wear
-TAIL_BRIDGE_SEC = 1800.0  # off-body runs closer than this are one tail (a package handled in transit is not a re-attachment); a tail shorter than this stays excluded time inside the duration
+TAIL_MIN_RUN_SEC = 1800.0  # a lead-off run this long is the recorder off the body, not a loose electrode; a shorter off-body tail stays excluded time inside the duration
+TAIL_LEAD_OFF_FRACTION = 0.9  # share of the windows from the tail's start to the end that must be lead-off: transit noise and handling before the card comes out pass the amplitude rules for up to 44 min at a stretch, so the tail is judged whole, not gap by gap
 
 
 @dataclass(frozen=True)
@@ -107,20 +107,17 @@ def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
 
 def _tail_start(lead_off: np.ndarray) -> int:
     """First window of the off-body tail, or len(lead_off) when there is
-    none: walking back from the end, off-body runs (LEAD_OFF_RUN_SEC or
-    longer) separated by less than TAIL_BRIDGE_SEC are one tail, and it
-    counts only when it is at least TAIL_BRIDGE_SEC long."""
+    none: the earliest lead-off run of TAIL_MIN_RUN_SEC or longer after
+    which at least TAIL_LEAD_OFF_FRACTION of the windows to the end of the
+    recording are lead-off. A re-attachment inside the tail can hide only
+    within the remaining fraction, and the report states the trimmed time."""
     n = lead_off.size
-    min_run = LEAD_OFF_RUN_SEC / WINDOW_SEC
-    bridge = TAIL_BRIDGE_SEC / WINDOW_SEC
-    start = n
-    for run_start, run_end in reversed(_runs(lead_off)):
-        if run_end - run_start < min_run:
-            continue
-        if start - run_end >= bridge:
-            break
-        start = run_start
-    return start if n - start >= bridge else n
+    min_run = TAIL_MIN_RUN_SEC / WINDOW_SEC
+    remaining = np.cumsum(lead_off[::-1])[::-1]  # lead-off windows from i to the end
+    for start, end in _runs(lead_off):
+        if end - start >= min_run and remaining[start] >= TAIL_LEAD_OFF_FRACTION * (n - start):
+            return start
+    return n
 
 
 def _bridge(spans: list[tuple[float, float]]) -> tuple[tuple[float, float], ...]:
