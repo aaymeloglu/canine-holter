@@ -46,6 +46,15 @@ WINDOWS = {
         "midnight": ("00:03:00", 40.0, [], []),
         # 16:06:55-16:07:15: a PVC at 16:07:03.17, wide on all three leads
         "pvc": ("16:06:55", 20.0, [], [8.172]),
+        # 06:34:53 and 06:35:36 (next day), asleep at 25-45 bpm: the beats at
+        # 6.156 and 9.172 are ventricular escape beats that Ch 2 and Ch 3 show
+        # as a small r and a deep S with no local maximum inside NeuroKit's
+        # gradient burst, so NeuroKit dropped them there and lead agreement
+        # lost them (the 2026-09-02 negative-QRS fiducial spec).
+        # The windows start 1 s before their first beat: NeuroKit drops any
+        # fiducial in the first 300 ms of a signal.
+        "escape_a": (72964.0, 21.0, [1.172, 3.667, 6.156, 8.133, 9.206, 10.039, 12.483, 14.706, 16.744, 18.017, 19.050, 20.333], []),
+        "escape_b": (73007.0, 21.0, [1.172, 2.939, 4.772, 5.889, 6.811, 9.172, 11.556, 13.394, 14.961, 16.389, 17.822, 19.528, 20.778], []),
     },
 }
 

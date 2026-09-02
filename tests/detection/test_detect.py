@@ -401,5 +401,69 @@ def test_agree_chains_fiducials_that_straddle_the_tolerance_into_one_beat():
     # and (C, T) would be two beats 32 samples apart; chained, with a lead
     # allowed once per beat, they are one beat and a lone T wave.
     from canine_holter.detection.detect import _agree
-    rows = _agree([np.array([100]), np.array([72, 132]), np.array([104])], tolerance=30)
+    rows = _agree([_resolved([100]), _resolved([72, 132]), _resolved([104])], tolerance=30)
     assert rows.tolist() == [[100, 72, 104]]
+
+
+def _resolved(positions):
+    return np.array(positions), np.zeros(len(positions), dtype=bool)
+
+
+def test_agree_needs_one_resolved_peak_in_a_cluster():
+    from canine_holter.detection.detect import _agree
+    fallback = (np.array([100]), np.array([True]))
+    assert _agree([fallback, _resolved([104]), _resolved([])], tolerance=30).tolist() == [[100, 104, 102]]
+    assert _agree([fallback, (np.array([104]), np.array([True])), _resolved([])], tolerance=30).tolist() == []
+
+
+# --- QRS fiducials --------------------------------------------------------------
+import neurokit2 as nk  # noqa: E402
+from canine_holter.detection.detect import _qrs_fiducials  # noqa: E402
+
+
+def _spike_train(polarity, fs=180.0, seconds=14.0, rr=1.2, width=0.04):
+    """Gaussian complexes of one polarity on a little baseline noise (a
+    perfectly flat baseline makes the Gaussian tails their own bursts). A
+    negative complex this wide has its gradient burst on its slopes, where
+    there is no local maximum: the deep-S case."""
+    t = np.arange(int(seconds * fs)) / fs
+    signal = 0.002 * np.random.default_rng(0).standard_normal(len(t))
+    centres = np.arange(1.0, seconds - 0.5, rr)
+    for c in centres:
+        signal += polarity * np.exp(-((t - c) / width) ** 2)
+    return signal, (centres * fs).astype(int)
+
+
+def test_qrs_fiducials_resolve_exactly_neurokits_peaks_on_a_positive_train():
+    signal, _ = _spike_train(+1.0)
+    _, info = nk.ecg_peaks(signal, sampling_rate=180.0)
+    resolved, fallback = _qrs_fiducials(signal, 180.0)
+    assert list(resolved) == list(info["ECG_R_Peaks"])
+    assert len(resolved) > 10 and len(fallback) == 0
+
+
+def test_qrs_fiducials_keep_a_negative_complex_neurokit_drops_as_a_fallback():
+    signal, troughs = _spike_train(-1.0)
+    _, info = nk.ecg_peaks(signal, sampling_rate=180.0)
+    assert len(info["ECG_R_Peaks"]) < len(troughs) / 2  # a V shape has no local maximum inside its burst
+    resolved, fallback = _qrs_fiducials(signal, 180.0)
+    assert list(resolved) == list(info["ECG_R_Peaks"])
+    assert len(fallback) >= len(troughs) / 2
+    assert all(np.min(np.abs(troughs - f)) <= 1 for f in fallback)  # each fallback sits on its trough
+    assert all(np.min(np.abs(np.concatenate([resolved, fallback]) - t)) <= 20 for t in troughs)  # no trough is lost
+
+
+def test_a_fallback_only_lead_is_never_a_beat_on_its_own():
+    negative, troughs = _spike_train(-1.0)
+    resolved, fallback = _qrs_fiducials(negative, 180.0)
+    assert len(fallback) > 0
+    times = [b.time for b in detect_beats(negative, 180.0)]
+    assert len(times) <= len(resolved)  # at most what NeuroKit resolved on its own
+
+
+def test_a_fallback_corroborates_a_beat_another_lead_resolved():
+    positive, peaks = _spike_train(+1.0)
+    negative, _ = _spike_train(-1.0)
+    times = np.array([b.time for b in detect_beats(np.vstack([positive, negative, np.zeros_like(positive)]), 180.0)])
+    assert len(times) == len(peaks)
+    assert np.all(np.abs(times - peaks / 180.0) <= 0.05)  # consensus of the apex and the trough-side fiducial
