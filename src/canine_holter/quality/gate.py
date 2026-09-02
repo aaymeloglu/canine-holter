@@ -24,6 +24,8 @@ MAX_DIFFERENCE_POWER_RATIO = 3.0  # variance of sample-to-sample differences ove
 EDGE_SEC = 60.0  # hookup and removal; the HE/LX vendor software calls the first and last minute artifact unconditionally
 BRIDGE_SEC = 30.0  # excluded windows this close are one span: quiet stretches inside an off-body tail are not ECG either
 PAD_SEC = 2.0  # beats right at a span's edge are half-buried in noise
+LEAD_OFF_RUN_SEC = 300.0  # a lead-off run this long is the recorder off the body; shorter is a loose electrode during wear
+TAIL_BRIDGE_SEC = 1800.0  # off-body runs closer than this are one tail (a package handled in transit is not a re-attachment); a tail shorter than this stays excluded time inside the duration
 
 
 @dataclass(frozen=True)
@@ -56,14 +58,16 @@ def assess_quality(samples: np.ndarray, sample_rate: float) -> SignalQuality:
     for the rules. A recording with no signal in any window (zero median
     peak-to-peak) is excluded whole rather than analyzed as flat. The
     remainder after the last full window needs no rule: the last-minute
-    edge span always covers it."""
-    duration = len(samples) / sample_rate
-    if duration == 0:
+    edge span always covers it. A trailing off-body region (see
+    _tail_start) is trimmed: the recording ends where it starts and
+    trimmed_sec says how much was dropped."""
+    recorded = len(samples) / sample_rate
+    if recorded == 0:
         return SignalQuality(0.0, ())
     window = int(WINDOW_SEC * sample_rate)
     n = len(samples) // window
     if n == 0:  # shorter than one window: the edge rule covers all of it
-        return SignalQuality(duration, ((0.0, duration),))
+        return SignalQuality(recorded, ((0.0, recorded),))
     windows = samples[: n * window].reshape(n, window)
     ptp = windows.max(axis=1) - windows.min(axis=1)
     flat_line = np.mean(np.diff(windows, axis=1) == 0, axis=1) > MAX_FLAT_FRACTION
@@ -71,26 +75,52 @@ def assess_quality(samples: np.ndarray, sample_rate: float) -> SignalQuality:
     reference = ptp[~(lead_off | flat_line)]  # the absolute rules' windows would drag the median
     median = float(np.median(reference)) if reference.size else 0.0
     if median <= 0:
-        return SignalQuality(duration, ((0.0, duration),))
+        return SignalQuality(recorded, ((0.0, recorded),))
     bad = (
         lead_off
         | flat_line
         | (ptp > MAX_AMPLITUDE_RATIO * median)
         | (ptp < MIN_AMPLITUDE_RATIO * median)
     )
+    kept = _tail_start(lead_off)
+    duration = recorded if kept == n else kept * WINDOW_SEC
     spans = [
         (max(0.0, i * WINDOW_SEC - PAD_SEC), min(duration, (i + 1) * WINDOW_SEC + PAD_SEC))
-        for i in np.flatnonzero(bad)
+        for i in np.flatnonzero(bad[:kept])
     ]
     spans.append((0.0, min(EDGE_SEC, duration)))
     spans.append((max(0.0, duration - EDGE_SEC), duration))
-    return SignalQuality(duration, _bridge(spans))
+    return SignalQuality(duration, _bridge(spans), trimmed_sec=recorded - duration)
 
 
 def _difference_power_ratio(windows: np.ndarray) -> np.ndarray:
     signal_var = windows.var(axis=1)
     diff_var = np.diff(windows, axis=1).var(axis=1)
     return np.divide(diff_var, signal_var, out=np.zeros_like(diff_var), where=signal_var > 0)
+
+
+def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
+    """(start, end) index pairs of the True runs in mask, end exclusive."""
+    edges = np.flatnonzero(np.diff(np.r_[False, mask, False].astype(np.int8)))
+    return list(zip(edges[0::2].tolist(), edges[1::2].tolist()))
+
+
+def _tail_start(lead_off: np.ndarray) -> int:
+    """First window of the off-body tail, or len(lead_off) when there is
+    none: walking back from the end, off-body runs (LEAD_OFF_RUN_SEC or
+    longer) separated by less than TAIL_BRIDGE_SEC are one tail, and it
+    counts only when it is at least TAIL_BRIDGE_SEC long."""
+    n = lead_off.size
+    min_run = LEAD_OFF_RUN_SEC / WINDOW_SEC
+    bridge = TAIL_BRIDGE_SEC / WINDOW_SEC
+    start = n
+    for run_start, run_end in reversed(_runs(lead_off)):
+        if run_end - run_start < min_run:
+            continue
+        if start - run_end >= bridge:
+            break
+        start = run_start
+    return start if n - start >= bridge else n
 
 
 def _bridge(spans: list[tuple[float, float]]) -> tuple[tuple[float, float], ...]:

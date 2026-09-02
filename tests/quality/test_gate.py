@@ -140,3 +140,34 @@ def test_amplitude_reference_ignores_lead_off_windows():
     assert q.excluded == ((0.0, 60.0), (198.0, 600.0))
     assert q.duration_sec == 600.0
     assert q.trimmed_sec == 0.0
+
+
+def test_long_lead_off_tail_is_trimmed():
+    q = assess_quality(np.concatenate([_sine(3600), _tone(7200)]), FS)
+    assert (q.duration_sec, q.trimmed_sec) == (3600.0, 7200.0)
+    assert q.excluded == ((0.0, 60.0), (3540.0, 3600.0))
+
+
+def test_short_lead_off_tail_is_excluded_not_trimmed():
+    q = assess_quality(np.concatenate([_sine(3600), _tone(600)]), FS)
+    assert (q.duration_sec, q.trimmed_sec) == (4200.0, 0.0)
+    assert q.excluded == ((0.0, 60.0), (3598.0, 4200.0))
+
+
+def test_lead_off_gap_followed_by_wear_is_not_a_tail():
+    q = assess_quality(np.concatenate([_sine(3600), _tone(3600), _sine(3600)]), FS)
+    assert (q.duration_sec, q.trimmed_sec) == (10800.0, 0.0)
+    assert q.excluded == ((0.0, 60.0), (3598.0, 7202.0), (10740.0, 10800.0))
+
+
+def test_tail_bridges_brief_signal_between_lead_off_runs():
+    q = assess_quality(np.concatenate([_sine(3600), _tone(3600), _sine(600), _tone(3600)]), FS)
+    assert (q.duration_sec, q.trimmed_sec) == (3600.0, 7800.0)
+
+
+def test_brief_lead_off_blip_during_wear_does_not_move_the_tail():
+    x = np.concatenate([_sine(3600), _tone(3600)])
+    x[_at(1800, 1810)] = _tone(10)
+    q = assess_quality(x, FS)
+    assert (q.duration_sec, q.trimmed_sec) == (3600.0, 3600.0)
+    assert q.excluded == ((0.0, 60.0), (1798.0, 1812.0), (3540.0, 3600.0))
