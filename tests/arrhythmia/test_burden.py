@@ -397,3 +397,25 @@ def test_hrv_is_none_with_fewer_than_two_successive_differences():
 
 def test_summary_carries_hrv():
     assert summarize(_chain([None, 0.8, 0.9, 0.8])).heart_rate_variability.nn_intervals == 3
+
+
+# --- rate shares and long pauses ---------------------------------------------
+
+
+def test_rate_shares_count_five_beat_median_windows_against_the_class_thresholds():
+    beats = _chain([None] + [0.3] * 9 + [1.5] * 9)  # 200 bpm then 40 bpm
+    s = summarize(beats, dog_weight_class="medium")  # 50 / 160 bpm
+    # 18 RRs make 14 windows; a window's median flips from 0.3 to 1.5 once three of five are slow.
+    assert (s.fast_beats, s.slow_beats, s.rated_beats) == (7, 7, 14)
+    assert (s.brady_threshold_bpm, s.tachy_threshold_bpm) == (50, 160)
+
+
+def test_rate_shares_are_zero_with_too_few_beats():
+    s = summarize(_chain([None, 0.3, 0.3]))
+    assert (s.fast_beats, s.slow_beats, s.rated_beats) == (0, 0, 0)
+
+
+def test_long_pauses_count_rrs_over_five_seconds():
+    s = summarize(_chain([None, 0.8, 3.0, 5.0, 5.5, 0.8]))
+    assert len(s.pauses) == 3
+    assert s.long_pauses == 1

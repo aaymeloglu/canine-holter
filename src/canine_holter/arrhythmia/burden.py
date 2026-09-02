@@ -7,6 +7,7 @@ from canine_holter.types import Beat
 # Provisional defaults - not yet calibrated against real canine recordings.
 # See docs/superpowers/specs/2026-08-13-pvc-detection-design.md, "Open items".
 PAUSE_THRESHOLD_SEC = 2.5
+LONG_PAUSE_THRESHOLD_SEC = 5.0  # the report's concern line (report/reference.py PAUSE_CONCERN_SEC), counted beside the 2.5 s pauses so a vendor report with a higher pause setting reads side by side
 BRADYCARDIA_HR_THRESHOLD = {"small": 60, "medium": 50, "large": 45}
 TACHYCARDIA_HR_THRESHOLD = {"small": 180, "medium": 160, "large": 150}
 SUSTAINED_EVENT_MIN_BEATS = 3  # consecutive beats needed to call it "sustained"
@@ -82,6 +83,12 @@ class ArrhythmiaSummary:
     tachycardia_events: list[tuple[float, float]]
     pauses: list[float]
     longest_pause_sec: float | None = None  # longest RR interval in the recording
+    long_pauses: int = 0  # RR intervals over LONG_PAUSE_THRESHOLD_SEC
+    slow_beats: int = 0  # HR_EXTREME_WINDOW_BEATS-beat median windows under the bradycardia threshold ...
+    fast_beats: int = 0  # ... and over the tachycardia threshold ...
+    rated_beats: int = 0  # ... out of this many windows
+    brady_threshold_bpm: float = 0.0
+    tachy_threshold_bpm: float = 0.0
     heart_rate: HeartRateStats | None = None  # None when too few RRs for a window
     heart_rate_variability: HeartRateVariability | None = None  # None with too few NN intervals
     longest_run: RunStats | None = None  # most beats; earliest on a tie
@@ -299,6 +306,8 @@ def summarize(
     tachy_threshold = TACHYCARDIA_HR_THRESHOLD[dog_weight_class]
     bradycardia_events = _sustained_hr_events(beats, brady_threshold, "brady")
     tachycardia_events = _sustained_hr_events(beats, tachy_threshold, "tachy")
+    _, window_rr = _windowed_rr(beats)
+    window_bpm = 60.0 / window_rr if len(window_rr) else window_rr
 
     runs = run_stats(beats)  # max() keeps the first of equal keys, i.e. the earliest run
     longest_run = max(runs, key=lambda r: r.beats) if runs else None
@@ -315,6 +324,12 @@ def summarize(
         tachycardia_events=tachycardia_events,
         pauses=pauses,
         longest_pause_sec=longest_pause_sec,
+        long_pauses=sum(1 for rr in rr_intervals if rr > LONG_PAUSE_THRESHOLD_SEC),
+        slow_beats=int(np.sum(window_bpm < brady_threshold)),
+        fast_beats=int(np.sum(window_bpm > tachy_threshold)),
+        rated_beats=len(window_bpm),
+        brady_threshold_bpm=brady_threshold,
+        tachy_threshold_bpm=tachy_threshold,
         heart_rate=heart_rate_stats(beats),
         heart_rate_variability=heart_rate_variability(beats),
         longest_run=longest_run,
