@@ -75,7 +75,7 @@ layout in `report/pdf.py`.
 Six summary panels, in order: Recording, Heart rate, Ventricular ectopy,
 Supraventricular ectopy, Pauses, RR variability.
 
-- Heart rate adds `Below <brady> bpm` and `Above <tachy> bpm` rows, each
+- Heart rate adds `Under <brady> bpm` and `Over <tachy> bpm` rows, each
   `count (pct%)` of rated windows with the reference `5-beat median`, and
   the Brady/Tachy events rows state their rule in the reference
   (`3+ beats < 45 bpm`).

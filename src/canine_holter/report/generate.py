@@ -115,11 +115,13 @@ class StripCaption:
 
 @dataclass(frozen=True)
 class StripItem:
-    """One rhythm strip: the beats it is about, its caption, and the gap
-    to bracket when it shows a pause."""
+    """One rhythm strip: the beats it is about, its caption, the gap to
+    bracket when it shows a pause, and whether its beats are shaded (an
+    hourly rhythm sample shades nothing: nothing in it is flagged)."""
     run: list[Beat]
     caption: StripCaption
     pause: tuple[float, float] | None = None
+    mark: bool = True
 
     @property
     def center_time(self) -> float:
@@ -243,8 +245,8 @@ def _heart_rate_group(summary: ArrhythmiaSummary, start_time: datetime | None) -
             SummaryRow("Mean", f"{hr.mean_bpm:.0f} bpm"),
             SummaryRow("Slowest", f"{hr.min_bpm:.0f} bpm at {short_time(hr.min_time, start_time)}", window),
             SummaryRow("Fastest", f"{hr.max_bpm:.0f} bpm at {short_time(hr.max_time, start_time)}", window),
-            SummaryRow(f"Below {brady:g} bpm", _share(summary.slow_beats, summary.rated_beats), window),
-            SummaryRow(f"Above {tachy:g} bpm", _share(summary.fast_beats, summary.rated_beats), window),
+            SummaryRow(f"Under {brady:g} bpm", _share(summary.slow_beats, summary.rated_beats), window),
+            SummaryRow(f"Over {tachy:g} bpm", _share(summary.fast_beats, summary.rated_beats), window),
         ]
     return SummaryGroup("Heart rate", rate_rows + [
         SummaryRow(
@@ -431,7 +433,7 @@ def _hourly_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time: d
             f"Hour {_hour_label(row, start_time)} · {short_time(beat.time, start_time)}",
             f"The first beats of the hour. {_hour_rate_text(row)}",
             "",
-        )))
+        ), mark=False))
     return StripSection(_capped_heading(HOURLY_TITLE, len(shown), len(rows)), items)
 
 

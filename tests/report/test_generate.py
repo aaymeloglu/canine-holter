@@ -266,8 +266,8 @@ def test_heart_rate_group_has_mean_and_timed_extremes():
 def test_heart_rate_group_shares_and_event_rules_name_the_thresholds():
     beats = _steady(10, 0.5)  # 120 bpm: 6 windows, none slow or fast for a medium dog
     rows = _rows(build_content(beats, summarize(beats), None), "Heart rate")
-    assert rows["Below 50 bpm"] == SummaryRow("Below 50 bpm", "0 (0%)", "5-beat median")
-    assert rows["Above 160 bpm"] == SummaryRow("Above 160 bpm", "0 (0%)", "5-beat median")
+    assert rows["Under 50 bpm"] == SummaryRow("Under 50 bpm", "0 (0%)", "5-beat median")
+    assert rows["Over 160 bpm"] == SummaryRow("Over 160 bpm", "0 (0%)", "5-beat median")
     assert rows["Brady events"] == SummaryRow("Brady events", "0", "3+ beats < 50 bpm")
     assert rows["Tachy events"] == SummaryRow("Tachy events", "0", "3+ beats > 160 bpm")
 
@@ -275,7 +275,7 @@ def test_heart_rate_group_shares_and_event_rules_name_the_thresholds():
 def test_heart_rate_shares_show_count_and_percent():
     beats = _steady(10, 0.3)  # 200 bpm: every window is fast
     rows = _rows(build_content(beats, summarize(beats), None), "Heart rate")
-    assert rows["Above 160 bpm"].value == "5 (100%)"
+    assert rows["Over 160 bpm"].value == "5 (100%)"
 
 
 def test_supraventricular_group_says_not_assessed():
@@ -418,6 +418,7 @@ def test_hourly_strips_come_last_one_per_hour_at_the_hours_first_beat():
     assert [item.run[0].time for item in section.items] == [0.0, 2471.0, 6071.0]
     assert section.items[0].caption.what == "The first beats of the hour. This hour: 120-120 bpm, mean 120."
     assert section.items[0].caption.significance == ""
+    assert not section.items[0].mark  # nothing in a rhythm sample is flagged, so nothing is shaded
 
 
 def test_hourly_strips_skip_an_hour_without_beats_and_say_when_rates_are_missing():

@@ -186,7 +186,7 @@ def _strip_page(
         gs = GridSpec(1, 1, figure=fig, left=_STRIP_LEFT, right=_STRIP_LEFT + _STRIP_W, top=y, bottom=y - height)
         axes = draw_strip(
             fig, gs[0], channels, channel_names, sample_rate, item.center_time, beats,
-            mark_times=[b.time for b in run], pause=pause,
+            mark_times=[b.time for b in run] if item.mark else [], pause=pause,
         )
         window = axes[0].get_xlim()[1]
         range_mv = axes[0].get_ylim()[1] - axes[0].get_ylim()[0]
