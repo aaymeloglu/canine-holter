@@ -4,13 +4,18 @@ from datetime import datetime
 import numpy as np
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import summarize
-from canine_holter.report.common import EVENTS_TITLE, EXTREMES_TITLE, ISOLATED_TITLE
 from canine_holter.quality.gate import SignalQuality
 from canine_holter.report.generate import (
+    EVENTS_TITLE,
+    EXTREMES_TITLE,
+    HOW_TO_READ_STRIPS,
+    ISOLATED_TITLE,
     SummaryRow,
     build_content,
-    write_report,
+    select_evenly,
+    short_time,
 )
+from canine_holter.report.pdf import write_report
 
 
 def _beat(time, rr, label, qrs=0.08):
@@ -52,14 +57,14 @@ def test_isolated_single_pvc_goes_in_its_own_section_not_flagged_events():
     beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(1.6, 0.8, "V"), _beat(2.4, 0.8, "N")]
     content = build_content(beats, summarize(beats), None)
     assert [s.heading for s in content.sections] == [ISOLATED_TITLE]
-    assert [item.label for item in content.sections[0].items] == ["PVC 1: isolated PVC at ~t=1.6s"]
+    assert [item.caption.title for item in content.sections[0].items] == ["Isolated PVC 1 · t=2s"]
     assert [[b.time for b in item.run] for item in content.sections[0].items] == [[1.6]]
 
 
 def test_flagged_events_come_before_isolated_pvcs():
     content = build_content(_couplet_and_single(), summarize(_couplet_and_single()), None)
     assert [s.heading for s in content.sections] == [EXTREMES_TITLE, EVENTS_TITLE, ISOLATED_TITLE]
-    assert [item.label for item in content.sections[1].items] == ["Event 1: 2 consecutive PVCs at ~t=2.0s"]
+    assert [item.caption.title for item in content.sections[1].items] == ["Event 1 · t=2s"]
 
 
 def test_zero_pvcs_yields_no_sections():
@@ -82,9 +87,23 @@ def test_flagged_event_uses_wall_clock_label_when_start_known():
     beats = [_beat(0.0, None, "N")] + [_beat(i * 0.8, 0.8, "V") for i in range(1, 3)]
     start = datetime(2026, 8, 23, 15, 33, 8)
     content = build_content(beats, summarize(beats), start)
-    assert [item.label for item in content.sections[0].items] == [
-        "Event 1: 2 consecutive PVCs at ~15:33:09 (t=1.2s)"
-    ]
+    assert [item.caption.title for item in content.sections[0].items] == ["Event 1 · 15:33:08"]
+
+
+def test_select_evenly_spreads_picks_across_a_long_list():
+    assert select_evenly([1, 2, 3], 24) == [1, 2, 3]
+    assert select_evenly(list(range(30)), 4) == [0, 10, 19, 29]
+
+
+def test_short_time_is_clock_with_start_and_elapsed_without():
+    assert short_time(8183.2, datetime(2026, 8, 23, 15, 33, 8)) == "17:49:31"
+    assert short_time(8183.2, None) == "t=8183s"
+
+
+def test_primer_covers_the_grid_the_leads_and_the_caveat_in_page_width_lines():
+    text = "\n".join(HOW_TO_READ_STRIPS)
+    assert "0.2 s" in text and "three" in text and "provisional" in text
+    assert all(len(line) <= 100 for line in HOW_TO_READ_STRIPS)
 
 
 def _steady(n, rr):
@@ -109,11 +128,11 @@ def test_extremes_section_comes_first_with_max_min_pause_and_fastest_run():
     content = build_content(beats, summary, None)
     section = content.sections[0]
     assert section.heading == EXTREMES_TITLE
-    assert [item.label.split(":")[0] for item in section.items] == [
+    assert [item.caption.title.split(" · ")[0] for item in section.items] == [
         "Fastest heart rate", "Slowest heart rate", "Longest pause", "Fastest run"
     ]
-    assert section.items[2].label == "Longest pause: 3.00 s, ending at t=33.0s"
-    assert section.items[3].label == "Fastest run: 4 beats, 240 bpm, t=10s"
+    assert section.items[2].caption.title == "Longest pause · t=33s"
+    assert section.items[3].caption.title == "Fastest run · t=10s"
     # The pause strip marks both beats bracketing the gap; the run strip marks every PVC.
     assert [b.time for b in section.items[2].run] == [30.0, 33.0]
     assert [b.time for b in section.items[3].run] == [10.0, 10.25, 10.5, 10.75]
@@ -123,7 +142,7 @@ def test_extremes_section_comes_first_with_max_min_pause_and_fastest_run():
 def test_extremes_section_omits_what_is_not_there():
     beats = _steady(10, 0.5)  # no pause above threshold, no runs
     section = build_content(beats, summarize(beats), None).sections[0]
-    assert [item.label.split(":")[0] for item in section.items] == ["Fastest heart rate", "Slowest heart rate"]
+    assert [item.caption.title.split(" · ")[0] for item in section.items] == ["Fastest heart rate", "Slowest heart rate"]
 
 
 def test_no_extremes_section_when_heart_rate_not_computed():

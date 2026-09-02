@@ -7,7 +7,7 @@ from canine_holter.detection.detect import detect_beats
 from canine_holter.classify.rules import classify_beats
 from canine_holter.arrhythmia.burden import summarize
 from canine_holter.quality.gate import assess_quality, exclude_beats
-from canine_holter.report.generate import write_report
+from canine_holter.report.pdf import write_report
 
 _START_TIME_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%H:%M:%S", "%H:%M")
 

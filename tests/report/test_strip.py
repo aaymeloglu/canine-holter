@@ -53,11 +53,10 @@ def test_channel_range_grows_to_the_next_millivolt_above_the_tallest_lead():
     assert channel_range_mv([np.array([0.0, 3.5])]) == 4.0
 
 
-def test_one_panel_per_lead_with_the_analysis_lead_named():
+def test_one_panel_per_lead_named_and_sharing_the_time_axis():
     fig, axes = _draw(_channels(3), _steady(100), center_time=10.0, mark_times=[10.4])
     assert len(axes) == 3
-    assert axes[0].get_ylabel() == "Ch 1\n(analysis)"
-    assert axes[1].get_ylabel() == "Ch 2"
+    assert [ax.get_ylabel() for ax in axes] == ["Ch 1", "Ch 2", "Ch 3"]
     assert axes[0].get_shared_x_axes().joined(axes[0], axes[2])
     plt.close(fig)
 

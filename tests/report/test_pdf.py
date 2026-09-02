@@ -141,7 +141,7 @@ def test_summary_page_renders_groups_with_status_colors_and_footer():
 
     beats = _beats_with_couplets(1)
     content = build_content(beats, summarize(beats), None)
-    fig = _summary_page(content.summary_groups, content.footer_lines)
+    fig = _summary_page(content)
     texts = {t.get_text(): t for t in fig.texts}
     assert "RECORDING" in texts and "VENTRICULAR ECTOPY" in texts and "Couplets" in texts
     assert texts["1"].get_color() == STATUS_COLORS["alert"]  # the couplet count

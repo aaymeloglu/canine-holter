@@ -3,10 +3,9 @@ the timeline with the hourly table on page 2 (the table continues on
 pages of its own for recordings longer than a day), then a one-page primer
 on reading strips, then two three-lead strips per page for each section
 (or, with no waveform, one text page per section)."""
-from __future__ import annotations
+import os
 import textwrap
 from datetime import datetime
-from typing import TYPE_CHECKING
 import matplotlib
 matplotlib.use("Agg")  # no display needed - this runs headless in CLI/CI
 import matplotlib.pyplot as plt
@@ -15,25 +14,17 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from canine_holter.arrhythmia.burden import ArrhythmiaSummary
-from canine_holter.report.common import (
-    DISCLAIMER,
-    HOW_TO_READ_STRIPS,
-    HOW_TO_READ_TITLE,
-    REPORT_TITLE,
-    run_center_time,
+from canine_holter.report.generate import (
+    ReportContent,
+    StripCaption,
+    StripItem,
+    StripSection,
+    SummaryGroup,
+    build_content,
 )
 from canine_holter.report.strip import CHANNEL_HEIGHT_MM, STRIP_WIDTH_MM, draw_strip, scale_label
 from canine_holter.report.timeline import draw_timeline
 from canine_holter.types import Beat
-
-if TYPE_CHECKING:  # generate imports pdf; only the types are needed here
-    from canine_holter.report.generate import (
-        ReportContent,
-        StripCaption,
-        StripItem,
-        StripSection,
-        SummaryGroup,
-    )
 
 PAGE_SIZE_IN = (8.5, 11)  # US Letter, portrait
 _PAGE_MM = (215.9, 279.4)
@@ -86,18 +77,18 @@ def _draw_group(fig: Figure, x: float, y: float, group: SummaryGroup) -> float:
     return y
 
 
-def _summary_page(groups: list[SummaryGroup], footer_lines: list[str]) -> Figure:
+def _summary_page(content: ReportContent) -> Figure:
     """Title, disclaimer, the four panels in a 2x2 grid, then the legend and
     source lines."""
     fig = plt.figure(figsize=PAGE_SIZE_IN)
     y = 0.95
-    fig.text(_LEFT, y, REPORT_TITLE, va="top", fontsize=16, fontweight="bold")
+    fig.text(_LEFT, y, content.title, va="top", fontsize=16, fontweight="bold")
     y -= 0.035
-    fig.text(_LEFT, y, DISCLAIMER, va="top", fontsize=10, fontstyle="italic")
+    fig.text(_LEFT, y, content.disclaimer, va="top", fontsize=10, fontstyle="italic")
     bottom = 1.0
-    for i, group in enumerate(groups):
+    for i, group in enumerate(content.summary_groups):
         bottom = min(bottom, _draw_group(fig, _PANEL_X[i % 2], _PANEL_TOP[i // 2], group))
-    _text_block(fig, bottom - 0.02, footer_lines, fontsize=8, color=REFERENCE_COLOR)
+    _text_block(fig, bottom - 0.02, content.footer_lines, fontsize=8, color=REFERENCE_COLOR)
     return fig
 
 
@@ -145,10 +136,10 @@ def _table_page(header: list[str], rows: list[list[str]]) -> Figure:
     return fig
 
 
-def _primer_page() -> Figure:
+def _primer_page(content: ReportContent) -> Figure:
     fig = plt.figure(figsize=PAGE_SIZE_IN)
-    fig.text(_LEFT, 0.95, HOW_TO_READ_TITLE, va="top", fontsize=12, fontweight="bold")
-    _text_block(fig, 0.91, HOW_TO_READ_STRIPS, fontsize=10)
+    fig.text(_LEFT, 0.95, content.primer_title, va="top", fontsize=12, fontweight="bold")
+    _text_block(fig, 0.91, content.primer_lines, fontsize=10)
     return fig
 
 
@@ -194,7 +185,7 @@ def _strip_page(
         height = _CHANNEL_H * channels.shape[0]
         gs = GridSpec(1, 1, figure=fig, left=_STRIP_LEFT, right=_STRIP_LEFT + _STRIP_W, top=y, bottom=y - height)
         axes = draw_strip(
-            fig, gs[0], channels, channel_names, sample_rate, run_center_time(run), beats,
+            fig, gs[0], channels, channel_names, sample_rate, item.center_time, beats,
             mark_times=[b.time for b in run], pause=pause,
         )
         window = axes[0].get_xlim()[1]
@@ -259,7 +250,7 @@ def write_pdf(
     draw_strips = channels is not None and sample_rate is not None and bool(content.sections)
     with PdfPages(out_path) as pdf:
         pages = [
-            _summary_page(content.summary_groups, content.footer_lines),
+            _summary_page(content),
             _timeline_page(beats, summary, start_time, header, first),
         ]
         pages += [
@@ -267,9 +258,40 @@ def write_pdf(
             for i in range(0, len(rest), TABLE_ROWS_PER_PAGE)
         ]
         if draw_strips:
-            pages.append(_primer_page())
+            pages.append(_primer_page(content))
         for fig in pages:
             pdf.savefig(fig)
             plt.close(fig)
         for section in content.sections:
             _write_section(pdf, section, channels, channel_names, sample_rate, beats)
+
+
+def write_report(
+    beats: list[Beat],
+    summary: ArrhythmiaSummary,
+    out_dir: str,
+    samples: np.ndarray | None,
+    sample_rate: float | None,
+    start_time: datetime | None = None,
+    channels: np.ndarray | None = None,
+    channel_names: tuple[str, ...] = (),
+) -> str:
+    """Write report.pdf into out_dir and return its path. Nothing else is
+    written. Strips show every lead in channels, or the one lead in samples
+    when that is all there is; without any waveform they are listed as
+    text."""
+    os.makedirs(out_dir, exist_ok=True)
+    pdf_path = os.path.join(out_dir, "report.pdf")
+    if channels is None and samples is not None:
+        channels, channel_names = samples[None, :], ("ECG",)
+    write_pdf(
+        pdf_path,
+        content=build_content(beats, summary, start_time),
+        beats=beats,
+        summary=summary,
+        start_time=start_time,
+        channels=channels,
+        channel_names=channel_names,
+        sample_rate=sample_rate,
+    )
+    return pdf_path

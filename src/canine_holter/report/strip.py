@@ -81,7 +81,6 @@ def draw_strip(
     beats: Sequence[Beat],
     mark_times: Sequence[float] = (),
     pause: tuple[float, float] | None = None,
-    analysis_channel: int = 0,
 ) -> list[Axes]:
     """Draw one strip (all leads) into a region of fig and return its axes,
     top lead first. beats are the recording's beats; those inside the window
@@ -107,8 +106,7 @@ def draw_strip(
         _grid(ax)
         for mark in mark_times:
             ax.axvspan(mark - start - _BAND_BEFORE_SEC, mark - start + _BAND_AFTER_SEC, color=MARK_COLOR, alpha=0.15, linewidth=0)
-        name = channel_names[i] + ("\n(analysis)" if i == analysis_channel else "")
-        ax.set_ylabel(name, rotation=0, ha="right", va="center", fontsize=8, labelpad=6)
+        ax.set_ylabel(channel_names[i], rotation=0, ha="right", va="center", fontsize=8, labelpad=6)
         last = i == n_channels - 1
         ax.tick_params(labelleft=False, left=False, labelbottom=last, bottom=last, which="both", labelsize=7)
         axes.append(ax)
