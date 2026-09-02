@@ -70,7 +70,8 @@ def run_analysis(
             samples=rec.samples[:keep],
             channels=None if rec.channels is None else rec.channels[:, :keep],
         )
-    beats = exclude_beats(detect_beats(rec.samples, rec.sample_rate), quality)
+    leads = rec.samples if rec.channels is None else rec.channels
+    beats = exclude_beats(detect_beats(leads, rec.sample_rate), quality)
     labeled = classify_beats(beats)
     summary = summarize(labeled, dog_weight_class=dog_weight_class, quality=quality)
     return write_report(

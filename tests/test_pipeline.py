@@ -68,18 +68,20 @@ _FLASH_SPIKE_PERIOD = 90  # 180 Hz / 90 samples = 2 Hz = 120 bpm
 
 
 def _spike_train_block_encoding():
-    # channel 0: +70,+70 up then -70,-70 back to baseline each period; a sharp,
-    # detectable QRS-like spike. Codes 7=+70, 9=-70 in the DR200 delta table.
+    # channels 0 and 1: +70,+70 up then -70,-70 back to baseline each period;
+    # a sharp, detectable QRS-like spike. Codes 7=+70, 9=-70 in the DR200
+    # delta table. Two leads carry it because a beat needs two leads to
+    # agree; channel 2 stays flat.
     encoded = np.zeros((304, 3), dtype=np.uint8)
     # +1/-1 count jitter between spikes: a real baseline is never exactly
     # flat, and a flat one is what quality gating excludes.
-    encoded[0::2, 0] = 1
-    encoded[1::2, 0] = 15
+    encoded[0::2, :2] = 1
+    encoded[1::2, :2] = 15
     phase = np.arange(304) % _FLASH_SPIKE_PERIOD
-    encoded[phase == 0, 0] = 7
-    encoded[phase == 1, 0] = 7
-    encoded[phase == 2, 0] = 9
-    encoded[phase == 3, 0] = 9
+    encoded[phase == 0, :2] = 7
+    encoded[phase == 1, :2] = 7
+    encoded[phase == 2, :2] = 9
+    encoded[phase == 3, :2] = 9
     return encoded
 
 

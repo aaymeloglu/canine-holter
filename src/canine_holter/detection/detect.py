@@ -60,46 +60,103 @@ FIDUCIAL_HALF_SEC = 0.05  # the beat is the largest deflection from baseline thi
 SLOW_RR_SEC = 0.6  # only intervals over this (< 100 bpm) serve as the sinus reference; at 75-100 bpm the T wave still clears NeuroKit's 300 ms spacing, and tachycardia is excluded by the median gate
 T_WAVE_MAX_COUPLING_SEC = 0.45
 T_WAVE_RHYTHM_TOLERANCE = 0.25  # |A->C - reference| within this fraction of it means B was interpolated
+# Lead agreement. A QRS is on every lead at once, so a beat is where at
+# least MIN_AGREEING_LEADS leads detect a peak within AGREEMENT_TOLERANCE_SEC
+# of each other; one lead's T wave, P wave, or noise spike has no partner.
+# The same QRS peaks up to ~55 ms apart from lead to lead (a PVC on Teeny's
+# 2026-08-27 recording), a T wave taken for a beat sits 250-350 ms after
+# its QRS, and the shortest RR seen is 255 ms at 235 bpm.
+AGREEMENT_TOLERANCE_SEC = 0.1
+MIN_AGREEING_LEADS = 2
 
 
-def detect_beats(samples: np.ndarray, sample_rate: float) -> list[Beat]:
-    """Detect R-peaks and estimate QRS width, returning unlabeled Beats.
+def detect_beats(leads: np.ndarray, sample_rate: float) -> list[Beat]:
+    """Detect beats on one lead (a 1-D array) or several (n_leads, n_samples)
+    and estimate each beat's QRS width, returning unlabeled Beats.
+
+    Each lead is detected on its own: NeuroKit2 R-peaks, then the
+    amplitude, search-back, and T-wave passes below. With several leads a
+    beat is where at least MIN_AGREEING_LEADS leads agree (see _agree), so
+    a lead whose morphology has shifted with posture can neither invent a
+    beat nor lose one the others see. Its time is the median of the
+    agreeing leads' peaks.
 
     QRS width comes from a Pan-Tompkins-style derivative-energy envelope
-    measured directly around each R-peak, not NeuroKit2's wave delineation
-    (`ecg_delineate`). Delineation-based onset/offset detection is tuned for
-    normal QRS morphology and reliably fails (NaN, or a method-dependent
-    fixed-window cap) on exactly the premature/wide beats a PVC classifier
-    needs width for. Validated on MIT-BIH record 119: 65/65 beats get a
-    valid width, with zero overlap between normal (0.069-0.078s) and PVC
-    (0.158-0.183s) ranges, vs. the original delineation-based approach
-    which returned NaN for 19/19 ground-truth PVC beats.
+    measured on every lead at that lead's own peak, and the beat's width
+    is the median across leads: with three leads, wide only when two are.
+    Delineation-based onset/offset detection (`ecg_delineate`) was
+    rejected because it fails on exactly the premature/wide beats a PVC
+    classifier needs width for; validated on MIT-BIH 119 (65/65 beats
+    measured, no overlap between normal 0.069-0.078 s and PVC 0.158-0.183 s).
 
-    Two post-passes correct NeuroKit's two known failure modes on Teeny's
-    recordings: fill_fast_gaps recovers beats missed at tachycardia, and
-    drop_interpolated_t_waves removes T waves detected as beats in slow
-    rhythm. See docs/superpowers/specs/2026-08-26-detector-tachycardia-and-t-wave-design.md.
+    Specs: docs/superpowers/specs/2026-08-26-detector-tachycardia-and-t-wave-design.md,
+    docs/superpowers/specs/2026-09-01-lead-agreement-qrs-width-design.md.
     """
-    cleaned = nk.ecg_clean(samples, sampling_rate=sample_rate)
+    leads = np.atleast_2d(np.asarray(leads, dtype=float))
+    cleaned = [nk.ecg_clean(lead, sampling_rate=sample_rate) for lead in leads]
+    positions = _agree(
+        [_lead_peaks(lead, sample_rate) for lead in cleaned],
+        int(AGREEMENT_TOLERANCE_SEC * sample_rate),
+    )
+    if len(positions) < 2:
+        return []
+
+    envelopes = [_qrs_energy_envelope(lead, sample_rate) for lead in cleaned]
+    search_half = int(QRS_WIDTH_SEARCH_WINDOW_SEC * sample_rate)
+    times = np.median(positions, axis=1) / sample_rate
+
+    beats = []
+    for i, row in enumerate(positions):
+        widths = [
+            w for envelope, r in zip(envelopes, row)
+            if (w := _qrs_width(envelope, int(r), search_half, sample_rate)) is not None
+        ]
+        beats.append(Beat(
+            time=float(times[i]),
+            rr_interval=float(times[i] - times[i - 1]) if i > 0 else None,
+            qrs_duration=float(np.median(widths)) if widths else None,
+            label=None,
+        ))
+    return beats
+
+
+def _lead_peaks(cleaned: np.ndarray, sample_rate: float) -> np.ndarray:
+    """One lead's R-peaks after the three single-lead correction passes."""
     _, r_info = nk.ecg_peaks(cleaned, sampling_rate=sample_rate)
     r_peaks = _reject_low_amplitude_peaks(cleaned, r_info["ECG_R_Peaks"], sample_rate)
     r_peaks = fill_fast_gaps(cleaned, r_peaks, sample_rate)
-    r_peaks = drop_interpolated_t_waves(r_peaks, sample_rate)
-    if len(r_peaks) < 2:
-        return []
+    return drop_interpolated_t_waves(r_peaks, sample_rate)
 
-    envelope = _qrs_energy_envelope(cleaned, sample_rate)
-    search_half = int(QRS_WIDTH_SEARCH_WINDOW_SEC * sample_rate)
 
-    beats = []
-    for i, r in enumerate(r_peaks):
-        time = r / sample_rate
-        rr = (r - r_peaks[i - 1]) / sample_rate if i > 0 else None
-        qrs_duration = _qrs_width(envelope, r, search_half, sample_rate)
-        beats.append(
-            Beat(time=time, rr_interval=rr, qrs_duration=qrs_duration, label=None)
-        )
-    return beats
+def _agree(peaks_by_lead: list[np.ndarray], tolerance: int) -> np.ndarray:
+    """Beats that at least MIN_AGREEING_LEADS leads (or every lead, when
+    there are fewer) detected within `tolerance` samples of each other, as
+    an (n_beats, n_leads) array holding each lead's own peak, or the
+    agreeing leads' median position for a lead that missed the beat."""
+    n_leads = len(peaks_by_lead)
+    needed = min(MIN_AGREEING_LEADS, n_leads)
+    rows = []
+    for cluster in _clusters(sorted((int(p), k) for k, ps in enumerate(peaks_by_lead) for p in ps), tolerance):
+        if len(cluster) >= needed:
+            consensus = int(np.median(list(cluster.values())))
+            rows.append([cluster.get(k, consensus) for k in range(n_leads)])
+    return np.array(rows, dtype=int).reshape(-1, n_leads)
+
+
+def _clusters(events: list[tuple[int, int]], tolerance: int):
+    """Group (position, lead) events, sorted by position, into runs no wider
+    than `tolerance`; each group maps lead -> its first position."""
+    cluster: dict[int, int] = {}
+    start = 0
+    for position, lead in events:
+        if cluster and position - start > tolerance:
+            yield cluster
+            cluster = {}
+        if not cluster:
+            start = position
+        cluster.setdefault(lead, position)
+    if cluster:
+        yield cluster
 
 
 def _reject_low_amplitude_peaks(

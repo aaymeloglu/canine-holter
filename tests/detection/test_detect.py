@@ -370,3 +370,73 @@ def test_drop_interpolated_t_waves_acts_in_a_moderate_rhythm_under_100_bpm():
     beats = [t * 0.7 for t in range(10)]
     with_t = sorted(beats + [3.5 + 0.3])
     assert drop_interpolated_t_waves(_peaks(sr, with_t), sr).tolist() == _peaks(sr, beats).tolist()
+
+
+def _three_lead_pulses(sample_rate=500.0):
+    """Two beats at 1.0 s and 2.0 s, as a narrow (sigma 8 ms) and a wide
+    (sigma 40 ms) rendering of the same times, plus a flat lead."""
+    t = np.arange(int(4.0 * sample_rate)) / sample_rate
+    narrow = _gaussian_pulse(t, 1.0, 0.008) + _gaussian_pulse(t, 2.0, 0.008)
+    wide = _gaussian_pulse(t, 1.0, 0.040) + _gaussian_pulse(t, 2.0, 0.040)
+    return narrow, wide, np.zeros_like(t), sample_rate
+
+
+def _widths(beats):
+    return [b.qrs_duration for b in beats]
+
+
+def _times(beats):
+    return [b.time for b in beats]
+
+
+def test_qrs_width_is_the_median_of_the_leads():
+    # Wide on one lead, narrow on the other two: two of three say narrow,
+    # so the beat is narrow.
+    narrow, wide, _, fs = _three_lead_pulses()
+    assert _widths(detect_beats(np.stack([wide, narrow, narrow]), fs)) == _widths(detect_beats(narrow, fs))
+
+
+def test_two_wide_leads_outvote_a_narrow_one():
+    narrow, wide, _, fs = _three_lead_pulses()
+    assert _widths(detect_beats(np.stack([narrow, wide, wide]), fs)) == _widths(detect_beats(wide, fs))
+
+
+def test_a_beat_seen_on_one_lead_only_is_not_a_beat():
+    narrow, _, flat, fs = _three_lead_pulses()
+    assert detect_beats(np.stack([narrow, flat, flat]), fs) == []
+
+
+def test_a_beat_seen_on_two_of_three_leads_is_a_beat_with_a_width_from_both():
+    narrow, _, flat, fs = _three_lead_pulses()
+    beats = detect_beats(np.stack([narrow, narrow, flat]), fs)
+    assert _times(beats) == _times(detect_beats(narrow, fs))
+    assert _widths(beats) == _widths(detect_beats(narrow, fs))
+
+
+def test_each_lead_is_measured_at_its_own_peak():
+    # The same QRS peaks 40 ms later on the second lead. Measured at its
+    # own peak it is as narrow as the first; measured at the consensus
+    # position it would not be.
+    fs = 500.0
+    t = np.arange(int(4.0 * fs)) / fs
+    first = _gaussian_pulse(t, 1.0, 0.008) + _gaussian_pulse(t, 2.0, 0.008)
+    later = _gaussian_pulse(t, 1.04, 0.008) + _gaussian_pulse(t, 2.04, 0.008)
+    beats = detect_beats(np.stack([first, later, first]), fs)
+    assert _widths(beats) == _widths(detect_beats(first, fs))
+    assert _times(beats) == _times(detect_beats(first, fs))
+
+
+def test_peaks_further_apart_than_the_tolerance_are_different_beats():
+    fs = 500.0
+    t = np.arange(int(4.0 * fs)) / fs
+    a = _gaussian_pulse(t, 1.0, 0.008) + _gaussian_pulse(t, 2.0, 0.008)
+    b = _gaussian_pulse(t, 1.3, 0.008) + _gaussian_pulse(t, 2.3, 0.008)  # 300 ms later: a T wave, not this QRS
+    assert detect_beats(np.stack([a, b, a]), fs) != [] and detect_beats(np.stack([a, b, b]), fs) != []
+    assert _times(detect_beats(np.stack([a, b, a]), fs)) == _times(detect_beats(a, fs))
+    assert _times(detect_beats(np.stack([a, b, b]), fs)) == _times(detect_beats(b, fs))
+
+
+def test_two_leads_must_both_agree():
+    narrow, _, flat, fs = _three_lead_pulses()
+    assert detect_beats(np.stack([narrow, flat]), fs) == []
+    assert _times(detect_beats(np.stack([narrow, narrow]), fs)) == _times(detect_beats(narrow, fs))
