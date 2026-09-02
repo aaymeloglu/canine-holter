@@ -61,3 +61,19 @@ def test_rejects_unknown_input(tmp_path):
 
     with pytest.raises(ValueError, match="Unsupported recording input"):
         load_recording(str(path))
+
+
+def test_detects_renamed_native_flash_by_content(tmp_path):
+    from tests.native_flash_factory import data_block, metadata_block
+
+    path = tmp_path / "flash2.dat"
+    path.write_bytes(metadata_block() + data_block(np.zeros((304, 3), dtype=np.uint8)) + bytes(511))
+    rec = load_recording(str(path))
+    assert len(rec.samples) == 304
+
+
+def test_rejects_dat_file_without_native_signature(tmp_path):
+    path = tmp_path / "other.dat"
+    path.write_bytes(bytes(1024))
+    with pytest.raises(ValueError, match="Unsupported recording input"):
+        load_recording(str(path))

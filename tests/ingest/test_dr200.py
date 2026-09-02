@@ -314,3 +314,43 @@ def test_native_flash_decodes_all_three_channels(tmp_path):
     np.testing.assert_allclose(rec.channels[2][:2], [-0.0125, -0.05])
     np.testing.assert_allclose(rec.samples, rec.channels[0])
     np.testing.assert_allclose(load_native_flash(path, channel=1).samples, rec.channels[1])
+
+
+def _ramp_block(step_code: int, **kwargs) -> bytes:
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    encoded[:, 0] = step_code
+    return data_block(encoded, **kwargs)
+
+
+def test_native_flash_stops_at_stale_blocks_from_an_earlier_recording(tmp_path):
+    # A reused card keeps an earlier recording's blocks after the new one.
+    # They carry a different sequence number and are dropped, even when
+    # their source positions happen to continue the new recording's.
+    path = tmp_path / "flash.dat"
+    path.write_bytes(
+        metadata_block()
+        + _ramp_block(1, source_position=5900, sequence=8)
+        + _ramp_block(1, source_position=5900 + 1216, sequence=8)
+        + _ramp_block(7, source_position=5900 + 2 * 1216, sequence=6)
+        + bytes(511)
+    )
+    rec = load_native_flash(path)
+    assert len(rec.samples) == 608
+    np.testing.assert_allclose(rec.samples[-1], 608 * 0.0125)
+
+
+def test_native_flash_ignores_everything_after_the_stale_boundary(tmp_path):
+    # Once the boundary is found nothing after it is validated: an old
+    # recording's non-contiguous block, another recorder's serial, and
+    # data after zero padding are all stale card contents.
+    path = tmp_path / "flash.dat"
+    path.write_bytes(
+        metadata_block()
+        + _ramp_block(1, source_position=5900)
+        + _ramp_block(1, source_position=9999, sequence=3, serial=13515)
+        + bytes(512)
+        + _ramp_block(1, source_position=5900, sequence=2)
+        + bytes(511)
+    )
+    rec = load_native_flash(path)
+    assert len(rec.samples) == 304

@@ -76,6 +76,7 @@ class ArrhythmiaSummary:
     duration_sec: float = 0.0  # recording length; the last beat's time when no quality was given
     analyzed_sec: float = 0.0  # duration minus excluded spans
     excluded: tuple[tuple[float, float], ...] = ()  # artifact spans, from SignalQuality
+    trimmed_sec: float = 0.0  # off-body tail dropped before analysis; the recorder ran duration_sec + trimmed_sec
 
 
 def pvc_runs(beats: list[Beat]) -> list[list[Beat]]:
@@ -234,9 +235,10 @@ def summarize(
     """
     if quality is not None:
         duration_sec, analyzed_sec, excluded = quality.duration_sec, quality.analyzed_sec, quality.excluded
+        trimmed_sec = quality.trimmed_sec
     else:
         duration_sec = beats[-1].time if beats else 0.0
-        analyzed_sec, excluded = duration_sec, ()
+        analyzed_sec, excluded, trimmed_sec = duration_sec, (), 0.0
     total_beats = len(beats)
     pvc_beats = [b for b in beats if b.label == "V"]
     pvc_count = len(pvc_beats)
@@ -283,4 +285,5 @@ def summarize(
         duration_sec=duration_sec,
         analyzed_sec=analyzed_sec,
         excluded=excluded,
+        trimmed_sec=trimmed_sec,
     )

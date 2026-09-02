@@ -18,6 +18,11 @@ def _at(start_sec, end_sec):
     return slice(int(start_sec * FS), int(end_sec * FS))
 
 
+def _tone(seconds, amplitude=0.5):
+    """The DR400's open-electrode lead-off excitation: alternating samples."""
+    return amplitude * np.where(np.arange(int(seconds * FS)) % 2 == 0, 1.0, -1.0)
+
+
 def test_clean_recording_excludes_only_the_first_and_last_minute():
     q = assess_quality(_sine(600), FS)
     assert q.duration_sec == 600.0
@@ -119,3 +124,57 @@ def test_exclude_beats_handles_consecutive_spans():
     assert [(b.time, b.rr_interval) for b in kept] == [
         (5.0, None), (5.5, 0.5), (25.0, None), (25.5, 0.5), (40.0, None), (40.5, 0.5)
     ]
+
+
+def test_lead_off_tone_is_excluded_even_at_ecg_like_amplitude():
+    x = _sine(600)
+    x[_at(200, 210)] = _tone(10)  # 1.0 peak-to-peak: inside the amplitude band
+    assert assess_quality(x, FS).excluded == ((0.0, 60.0), (198.0, 212.0), (540.0, 600.0))
+
+
+def test_amplitude_reference_ignores_lead_off_windows():
+    # 400 s of faint tone would drag the median to 0.3 and make the 2.0 ECG
+    # look like a high-amplitude burst.
+    x = np.concatenate([_sine(200), _tone(400, amplitude=0.15)])
+    q = assess_quality(x, FS)
+    assert q.excluded == ((0.0, 60.0), (198.0, 600.0))
+    assert q.duration_sec == 600.0
+    assert q.trimmed_sec == 0.0
+
+
+def test_long_lead_off_tail_is_trimmed():
+    q = assess_quality(np.concatenate([_sine(3600), _tone(7200)]), FS)
+    assert (q.duration_sec, q.trimmed_sec) == (3600.0, 7200.0)
+    assert q.excluded == ((0.0, 60.0), (3540.0, 3600.0))
+
+
+def test_short_lead_off_tail_is_excluded_not_trimmed():
+    q = assess_quality(np.concatenate([_sine(3600), _tone(600)]), FS)
+    assert (q.duration_sec, q.trimmed_sec) == (4200.0, 0.0)
+    assert q.excluded == ((0.0, 60.0), (3598.0, 4200.0))
+
+
+def test_lead_off_gap_followed_by_wear_is_not_a_tail():
+    q = assess_quality(np.concatenate([_sine(3600), _tone(3600), _sine(3600)]), FS)
+    assert (q.duration_sec, q.trimmed_sec) == (10800.0, 0.0)
+    assert q.excluded == ((0.0, 60.0), (3598.0, 7202.0), (10740.0, 10800.0))
+
+
+def test_tail_bridges_brief_signal_between_lead_off_runs():
+    q = assess_quality(np.concatenate([_sine(3600), _tone(3600), _sine(600), _tone(3600)]), FS)
+    assert (q.duration_sec, q.trimmed_sec) == (3600.0, 7800.0)
+
+
+def test_tail_survives_handling_noise_before_the_card_comes_out():
+    # 15 min of amplitude-plausible signal at the very end (the package
+    # opened, the recorder handled) is inside the tail, not a re-attachment.
+    q = assess_quality(np.concatenate([_sine(3600), _tone(10800), _sine(900)]), FS)
+    assert (q.duration_sec, q.trimmed_sec) == (3600.0, 11700.0)
+
+
+def test_brief_lead_off_blip_during_wear_does_not_move_the_tail():
+    x = np.concatenate([_sine(3600), _tone(3600)])
+    x[_at(1800, 1810)] = _tone(10)
+    q = assess_quality(x, FS)
+    assert (q.duration_sec, q.trimmed_sec) == (3600.0, 3600.0)
+    assert q.excluded == ((0.0, 60.0), (1798.0, 1812.0), (3540.0, 3600.0))

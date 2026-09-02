@@ -20,6 +20,11 @@ _DATA_BLOCK_TYPE = 0x1E
 _DATA_PAYLOAD = slice(10, 466)
 _SAMPLES_PER_BLOCK = 304
 _SOURCE_BYTES_PER_SAMPLE = 4
+# Bytes 466..472 of every ECG block: u16 recording sequence number, u32
+# recorder serial number (its last five digits: 27226 for serial 127226).
+# Both are constant within one recording, so the first ECG block's pair
+# identifies the recording and a reused card's older blocks end it.
+_SESSION_KEY_OFFSET = 466
 _ZERO_BLOCK = bytes(_BLOCK_SIZE)
 
 # SampleStorageFormat=1 stores one four-bit sample difference per channel.
@@ -33,6 +38,14 @@ _DELTA_COUNTS = np.array(
 
 class NativeDR200FormatError(ValueError):
     """Raised when a native ``flash.dat`` is malformed or unsupported."""
+
+
+def _session_key(block: bytes) -> tuple[int, int]:
+    return struct.unpack_from("<HI", block, _SESSION_KEY_OFFSET)
+
+
+def _is_data_block(block: bytes) -> bool:
+    return block[4] == _DATA_BLOCK_TYPE and block[5] == 0
 
 
 def _replace_pacemaker_markers(samples: np.ndarray) -> np.ndarray:
@@ -162,14 +175,21 @@ def _inspect_native_flash(path: Path) -> tuple[int, datetime | None]:
     data_block_count = 0
     expected_position: int | None = None
     active_block_count = 0
+    session_key: tuple[int, int] | None = None
 
     for _, block in _iter_active_blocks(path):
         active_block_count += 1
         if active_block_count == 1 and b"SampleStorageFormat=" in block:
             metadata = _parse_metadata(block)
 
-        if block[4] != _DATA_BLOCK_TYPE or block[5] != 0:
+        if not _is_data_block(block):
             continue
+
+        key = _session_key(block)
+        if session_key is None:
+            session_key = key
+        elif key != session_key:
+            break  # stale blocks of an earlier recording on a reused card
 
         source_position = struct.unpack_from("<I", block, 6)[0]
         if expected_position is not None and source_position != expected_position:
@@ -235,6 +255,10 @@ def load_native_flash(
     checksummed ECG block.  Each channel is encoded as a nonlinear four-bit
     difference from its previous sample.  Pacemaker markers are reconstructed
     by interpolation so they do not become artificial voltage spikes.
+
+    A reused card keeps older recordings' blocks after this one; decoding
+    stops at the first ECG block whose sequence number or serial differs
+    from the first block's.
     """
     if channel not in (0, 1, 2):
         raise ValueError("channel must be 0, 1, or 2")
@@ -252,8 +276,11 @@ def load_native_flash(
     counts_by_channel = np.empty((3, data_block_count * _SAMPLES_PER_BLOCK), dtype=np.float64)
     cursor = 0
     previous_counts = np.zeros(3, dtype=np.int64)
+    total_samples = counts_by_channel.shape[1]
     for _, block in _iter_active_blocks(flash_path):
-        if block[4] != _DATA_BLOCK_TYPE or block[5] != 0:
+        if cursor == total_samples:
+            break
+        if not _is_data_block(block):
             continue
 
         encoded, marker_rows = _decode_data_block(block)
