@@ -355,3 +355,85 @@ def test_summary_empty_beats_with_quality_still_reports_duration():
     s = summarize([], quality=SignalQuality(120.0, ((0.0, 120.0),)))
     assert (s.duration_sec, s.analyzed_sec, s.total_beats) == (120.0, 0.0, 0)
     assert [(r.start_sec, r.end_sec, r.beats, r.analyzed_sec) for r in s.hourly] == [(0.0, 120.0, 0, 0.0)]
+
+
+# --- heart-rate variability ---------------------------------------------------
+import pytest  # noqa: E402
+from canine_holter.arrhythmia.burden import heart_rate_variability  # noqa: E402
+
+
+def _chain(rrs, labels=None):
+    """Beats at cumulative times from a list of RRs (the first beat has none)."""
+    labels = labels or ["N"] * len(rrs)
+    t, beats = 0.0, []
+    for rr, label in zip(rrs, labels):
+        t += rr or 0.0
+        beats.append(_beat(t, rr, label))
+    return beats
+
+
+def test_hrv_sdnn_rmssd_pnn50_from_literal_nn_intervals():
+    hrv = heart_rate_variability(_chain([None, 0.8, 0.9, 0.8, 1.0, 1.04]))
+    # NN = 800, 900, 800, 1000, 1040 ms: mean 908, population SD sqrt(9856)
+    assert hrv.nn_intervals == 5
+    assert hrv.sdnn_ms == pytest.approx(99.277, abs=0.01)
+    # successive differences 100, -100, 200, 40: RMS sqrt(15400); three of four over 50 ms
+    assert hrv.rmssd_ms == pytest.approx(124.097, abs=0.01)
+    assert hrv.pnn50_pct == pytest.approx(75.0)
+
+
+def test_hrv_skips_a_pvc_its_follower_and_the_first_beat():
+    beats = _chain([None, 0.8, 0.5, 1.1, 0.8, 0.8, 0.8], ["N", "N", "V", "N", "N", "N", "N"])
+    hrv = heart_rate_variability(beats)
+    # The 0.5 (V) and the 1.1 (after a V) are not NN; the chain restarts at the 0.8s.
+    assert hrv.nn_intervals == 4
+    assert (hrv.sdnn_ms, hrv.rmssd_ms, hrv.pnn50_pct) == (0.0, 0.0, 0.0)
+
+
+def test_hrv_is_none_with_fewer_than_two_successive_differences():
+    assert heart_rate_variability(_chain([None, 0.8, 0.9])) is None
+    assert heart_rate_variability([]) is None
+
+
+def test_summary_carries_hrv():
+    assert summarize(_chain([None, 0.8, 0.9, 0.8])).heart_rate_variability.nn_intervals == 3
+
+
+# --- rate shares and long pauses ---------------------------------------------
+
+
+def test_rate_shares_count_five_beat_median_windows_against_the_class_thresholds():
+    beats = _chain([None] + [0.3] * 9 + [1.5] * 9)  # 200 bpm then 40 bpm
+    s = summarize(beats, dog_weight_class="medium")  # 50 / 160 bpm
+    # 18 RRs make 14 windows; a window's median flips from 0.3 to 1.5 once three of five are slow.
+    assert (s.fast_beats, s.slow_beats, s.rated_beats) == (7, 7, 14)
+    assert (s.brady_threshold_bpm, s.tachy_threshold_bpm) == (50, 160)
+
+
+def test_rate_shares_are_zero_with_too_few_beats():
+    s = summarize(_chain([None, 0.3, 0.3]))
+    assert (s.fast_beats, s.slow_beats, s.rated_beats) == (0, 0, 0)
+
+
+def test_long_pauses_count_rrs_over_five_seconds():
+    s = summarize(_chain([None, 0.8, 3.0, 5.0, 5.5, 0.8]))
+    assert len(s.pauses) == 3
+    assert s.long_pauses == 1
+
+
+# --- clock-hour rows ----------------------------------------------------------
+from datetime import datetime  # noqa: E402
+
+
+def test_hourly_rows_align_to_clock_hours_when_the_start_is_known():
+    beats = _hours_of_beats(2.0, 0.5)  # beats at 0, 0.5, ..., 7200.0
+    rows = summarize(beats, start_time=datetime(2026, 8, 27, 10, 18, 49)).hourly
+    # 10:18:49 is 2471 s before 11:00:00.
+    assert [(r.start_sec, r.end_sec) for r in rows] == [(0.0, 2471.0), (2471.0, 6071.0), (6071.0, 7200.0)]
+    assert [r.beats for r in rows] == [4942, 7200, 2259]  # the last beat, at 7200.0, belongs to the last row
+
+
+def test_hourly_rows_from_a_start_on_the_hour_match_the_unaligned_rows():
+    beats = _hours_of_beats(1.5, 0.5)
+    aligned = summarize(beats, start_time=datetime(2026, 8, 27, 10, 0, 0)).hourly
+    assert [(r.start_sec, r.end_sec) for r in aligned] == [(r.start_sec, r.end_sec) for r in summarize(beats).hourly]

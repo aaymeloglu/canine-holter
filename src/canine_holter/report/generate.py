@@ -7,8 +7,11 @@ import numpy as np
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import (
     HR_EXTREME_WINDOW_BEATS,
+    LONG_PAUSE_THRESHOLD_SEC,
     MIN_RUN_BEATS,
+    MIN_SUCCESSIVE_DIFFERENCES,
     PAUSE_THRESHOLD_SEC,
+    SUSTAINED_EVENT_MIN_BEATS,
     ArrhythmiaSummary,
     HourRow,
     RunStats,
@@ -38,6 +41,8 @@ MAX_STRIPS_PER_SECTION = 24  # 12 PDF pages at 2 strips/page; never a silent cap
 EXTREMES_TITLE = "Heart-rate extremes, longest pause, fastest run"
 EVENTS_TITLE = "Flagged events (couplets, triplets, VT runs)"
 ISOLATED_TITLE = "Isolated PVCs"
+HOURLY_TITLE = "One strip per hour"
+MAX_HOURLY_STRIPS = 48  # two days of hours; stated in the heading when it applies
 HOURLY_HEADER = [
     "Hour", "Analyzed (min)", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets",
     f"Runs ({MIN_RUN_BEATS}+)", "Pauses",
@@ -73,6 +78,9 @@ HOW_TO_READ_STRIPS = [  # under 100 characters a line: they print at 10 pt acros
     "",
     "The labels are the software's provisional calls, not a cardiologist's. The strips are here so",
     "that a reader - or the cardiologist - can check them.",
+    "",
+    "The last section shows one strip at the start of every hour, so the underlying rhythm can be",
+    "checked through the day and night, not only where the software flagged something.",
 ]
 
 T = TypeVar("T")
@@ -107,11 +115,13 @@ class StripCaption:
 
 @dataclass(frozen=True)
 class StripItem:
-    """One rhythm strip: the beats it is about, its caption, and the gap
-    to bracket when it shows a pause."""
+    """One rhythm strip: the beats it is about, its caption, the gap to
+    bracket when it shows a pause, and whether its beats are shaded (an
+    hourly rhythm sample shades nothing: nothing in it is flagged)."""
     run: list[Beat]
     caption: StripCaption
     pause: tuple[float, float] | None = None
+    mark: bool = True
 
     @property
     def center_time(self) -> float:
@@ -218,9 +228,14 @@ def _recording_group(summary: ArrhythmiaSummary, start_time: datetime | None) ->
     ])
 
 
+def _share(count: int, total: int) -> str:
+    return f"{count} ({100.0 * count / total:.0f}%)" if total else "0 (0%)"
+
+
 def _heart_rate_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> SummaryGroup:
     hr = summary.heart_rate
     window = f"{HR_EXTREME_WINDOW_BEATS}-beat median"
+    brady, tachy = summary.brady_threshold_bpm, summary.tachy_threshold_bpm
     if hr is None:
         rate_rows = [
             SummaryRow("Heart rate", f"not computed (fewer than {HR_EXTREME_WINDOW_BEATS} beats with an RR)")
@@ -230,11 +245,24 @@ def _heart_rate_group(summary: ArrhythmiaSummary, start_time: datetime | None) -
             SummaryRow("Mean", f"{hr.mean_bpm:.0f} bpm"),
             SummaryRow("Slowest", f"{hr.min_bpm:.0f} bpm at {short_time(hr.min_time, start_time)}", window),
             SummaryRow("Fastest", f"{hr.max_bpm:.0f} bpm at {short_time(hr.max_time, start_time)}", window),
+            SummaryRow(f"Under {brady:g} bpm", _share(summary.slow_beats, summary.rated_beats), window),
+            SummaryRow(f"Over {tachy:g} bpm", _share(summary.fast_beats, summary.rated_beats), window),
         ]
     return SummaryGroup("Heart rate", rate_rows + [
-        SummaryRow("Brady events", str(len(summary.bradycardia_events))),
-        SummaryRow("Tachy events", str(len(summary.tachycardia_events))),
+        SummaryRow(
+            "Brady events", str(len(summary.bradycardia_events)), f"{SUSTAINED_EVENT_MIN_BEATS}+ beats < {brady:g} bpm"
+        ),
+        SummaryRow(
+            "Tachy events", str(len(summary.tachycardia_events)), f"{SUSTAINED_EVENT_MIN_BEATS}+ beats > {tachy:g} bpm"
+        ),
     ])
+
+
+def _supraventricular_group() -> SummaryGroup:
+    """Stated, not counted: a premature narrow beat cannot be told from
+    sinus arrhythmia by timing alone (pNN50 runs ~70% in a resting dog),
+    and P waves are not analyzed. Absent must read as absent, not zero."""
+    return SummaryGroup("Supraventricular ectopy", [SummaryRow("SVPBs", "not assessed", "needs P-wave analysis")])
 
 
 def _run_text(run: RunStats, start_time: datetime | None) -> str:
@@ -270,19 +298,38 @@ def _pause_group(summary: ArrhythmiaSummary) -> SummaryGroup:
     longest = summary.longest_pause_sec
     return SummaryGroup("Pauses", [
         SummaryRow("Pauses", str(len(summary.pauses)), f">= {PAUSE_THRESHOLD_SEC:g} s"),
+        SummaryRow(f"Pauses > {LONG_PAUSE_THRESHOLD_SEC:g} s", str(summary.long_pauses)),
         SummaryRow(
             "Longest", f"{longest:.2f} s" if longest is not None else "n/a", PAUSE_BAND, pause_status(longest)
         ),
     ])
 
 
+def _variability_group(summary: ArrhythmiaSummary) -> SummaryGroup:
+    """Uncoloured: there are no canine reference bands for these."""
+    hrv = summary.heart_rate_variability
+    if hrv is None:
+        rows = [SummaryRow(
+            "RR variability", f"not computed (fewer than {MIN_SUCCESSIVE_DIFFERENCES} successive NN differences)"
+        )]
+    else:
+        rows = [
+            SummaryRow("SDNN", f"{hrv.sdnn_ms:.0f} ms", f"{hrv.nn_intervals} NN intervals"),
+            SummaryRow("RMSSD", f"{hrv.rmssd_ms:.0f} ms"),
+            SummaryRow("pNN50", f"{hrv.pnn50_pct:.0f}%"),
+        ]
+    return SummaryGroup("RR variability", rows)
+
+
 def summary_groups(summary: ArrhythmiaSummary, start_time: datetime | None) -> list[SummaryGroup]:
-    """The four summary panels, in reading order."""
+    """The six summary panels, in reading order (a 3x2 grid on the page)."""
     return [
         _recording_group(summary, start_time),
         _heart_rate_group(summary, start_time),
         _ectopy_group(summary, start_time),
+        _supraventricular_group(),
         _pause_group(summary),
+        _variability_group(summary),
     ]
 
 
@@ -350,18 +397,44 @@ def _run_significance(n: int, bpm: float | None) -> tuple[str, str]:
     )
 
 
+def _capped_heading(title: str, shown: int, total: int) -> str:
+    return title if shown == total else f"{title} ({shown} of {total} shown, evenly spaced through the recording)"
+
+
 def _section(title: str, runs: list[list[Beat]], beats: list[Beat], start_time: datetime | None) -> StripSection | None:
     """A capped section of PVC runs, with the cap spelled out in the heading
     whenever it applied."""
     if not runs:
         return None
     shown = select_evenly(runs, MAX_STRIPS_PER_SECTION)
-    heading = title if len(shown) == len(runs) else (
-        f"{title} ({len(shown)} of {len(runs)} shown, evenly spaced through the recording)"
-    )
-    return StripSection(heading, [
+    return StripSection(_capped_heading(title, len(shown), len(runs)), [
         StripItem(run, _pvc_caption(i, run, beats, start_time)) for i, run in enumerate(shown)
     ])
+
+
+def _hour_rate_text(row: HourRow) -> str:
+    if row.mean_bpm is None:
+        return "Too few beats this hour for a rate."
+    return f"This hour: {row.min_bpm:.0f}-{row.max_bpm:.0f} bpm, mean {row.mean_bpm:.0f}."
+
+
+def _hourly_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time: datetime | None) -> StripSection | None:
+    """A strip at the first beat of every hour that has one: the underlying
+    rhythm, checkable through the day and not only where something was
+    flagged (HE/LX prints the same "one per hour" strips)."""
+    rows = [row for row in summary.hourly if row.beats]
+    if not rows:
+        return None
+    shown = select_evenly(rows, MAX_HOURLY_STRIPS)
+    items = []
+    for row in shown:
+        beat = next(b for b in beats if b.time >= row.start_sec)
+        items.append(StripItem([beat], StripCaption(
+            f"Hour {_hour_label(row, start_time)} · {short_time(beat.time, start_time)}",
+            f"The first beats of the hour. {_hour_rate_text(row)}",
+            "",
+        ), mark=False))
+    return StripSection(_capped_heading(HOURLY_TITLE, len(shown), len(rows)), items)
 
 
 def _beat_at(beats: list[Beat], time: float) -> Beat:
@@ -423,15 +496,16 @@ def _extremes_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time:
 
 def build_content(beats: list[Beat], summary: ArrhythmiaSummary, start_time: datetime | None) -> ReportContent:
     """Assemble the report content: summary panels, the strip sections
-    (heart-rate extremes, then flagged multi-beat runs, then isolated PVCs;
-    the latter two capped at MAX_STRIPS_PER_SECTION with the cap stated in
-    the heading), and the hourly table. Event times are wall-clock labels
+    (heart-rate extremes, then flagged multi-beat runs, then isolated PVCs,
+    then one strip per hour; the capped sections state their cap in the
+    heading), and the hourly table. Event times are wall-clock labels
     when start_time is known."""
     runs = pvc_runs(beats)
     sections = [
         _extremes_section(beats, summary, start_time),
         _section(EVENTS_TITLE, [r for r in runs if len(r) >= 2], beats, start_time),
         _section(ISOLATED_TITLE, [r for r in runs if len(r) == 1], beats, start_time),
+        _hourly_section(beats, summary, start_time),
     ]
     return ReportContent(
         title=REPORT_TITLE,

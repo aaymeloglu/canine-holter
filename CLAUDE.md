@@ -24,8 +24,8 @@ ingest → quality → detection → classify → arrhythmia → report
 - `quality/gate.py`: returns recording duration, excluded artifact spans, and the length of any trimmed off-body tail. `exclude_beats()` drops beats inside those spans and resets the first RR afterward so artifact cannot become a pause, run, or rate event. The lead-off rule catches the DR400's open-electrode tone (a square wave at half the sample rate) and the amplitude median ignores tone and flat windows. Kurtosis and spectral-noise rules were rejected because they excluded ventricular flutter/VT; read the signal-quality spec before adding a noise rule.
 - `detection/detect.py`: NeuroKit2 R-peak detection per lead, lead agreement (a beat needs two leads within 100 ms; its QRS width is the median of the per-lead widths, each measured at that lead's own peak), plus custom QRS width measurement. Its amplitude window must cover the whole ±150 ms QRS search range. Rate-gated search-back and T-wave rejection address separate, locally gated failure modes. Extend the hand-counted Teeny fixtures before retuning thresholds.
 - `classify/rules.py`: causal rolling-baseline rules. A PVC must be both premature and wide. The sequential loop is intentional; future beats must never influence the current beat.
-- `arrhythmia/burden.py`: produces `ArrhythmiaSummary`, including burden, runs, pauses, rate events, heart-rate statistics, quality accounting, and hourly rows.
-- `report/`: builds plain `ReportContent`, then renders `report.pdf`. Reports include the disclaimer, reference bands, quality accounting, timeline, hourly table, and reviewable ECG strips. Strip caps must always be stated.
+- `arrhythmia/burden.py`: produces `ArrhythmiaSummary`, including burden, runs, pauses (at 2.5 s and 5 s), rate events and rate shares, heart-rate statistics, heart-rate variability (SDNN, RMSSD, pNN50 over NN intervals), quality accounting, and hourly rows, which align to clock hours when the recording start is known.
+- `report/`: builds plain `ReportContent`, then renders `report.pdf`. Reports include the disclaimer, six summary panels with reference bands, quality accounting, timeline, hourly table, and reviewable ECG strips, ending with one strip per hour. Strip caps must always be stated. The cardiologist's HE/LX report is the external oracle; `docs/superpowers/specs/2026-09-02-cardiologist-report-parity-design.md` records how its numbers map to ours.
 - `gui/app.py`: a small Tkinter wrapper around `run_analysis()`. Analysis runs on a worker thread.
 
 Detailed rationale, measurements, rejected approaches, and acceptance evidence live in `docs/superpowers/specs/`. Completed implementation steps belong in git history, not duplicated plans.
@@ -97,6 +97,7 @@ The GUI ships through GitHub Releases as a signed/notarized macOS app and an uns
 ## Known limits
 
 - The pipeline analyzes channel 0; CLI and GUI do not yet expose channel selection.
+- Supraventricular ectopy, AV block, and junctional escape beats are not assessed; they need P-wave analysis. The report says so for SVPBs rather than printing zero.
 - Pacemaker handling is format-faithful but only synthetically tested.
 - Detection/classification and brady/tachy/pause thresholds remain provisional.
 - Quality gating catches severe artifact and the first/last minute, but not all moderate or normal-amplitude hash noise. Do not add kurtosis or template-correlation SQI without new evidence; existing specs document why they failed.
