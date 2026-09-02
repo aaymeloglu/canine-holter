@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pytest
 
+from canine_holter.ingest import loader
 from canine_holter.ingest.loader import load_recording
 
 
