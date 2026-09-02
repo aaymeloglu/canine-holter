@@ -178,3 +178,19 @@ def test_brief_lead_off_blip_during_wear_does_not_move_the_tail():
     q = assess_quality(x, FS)
     assert (q.duration_sec, q.trimmed_sec) == (3600.0, 3600.0)
     assert q.excluded == ((0.0, 60.0), (1798.0, 1812.0), (3540.0, 3600.0))
+
+
+def test_tail_absorbs_the_removal_minutes_before_it():
+    # The patch coming off: bursts of artifact separated by short stretches
+    # that pass the amplitude rules, then the tone. All of it is tail.
+    x = np.concatenate([_sine(3600), _sine(60) * 10, _sine(120), _sine(60) * 10, _tone(7200)])
+    q = assess_quality(x, FS)
+    assert (q.duration_sec, q.trimmed_sec) == (3600.0, 7440.0)
+    assert q.excluded == ((0.0, 60.0), (3540.0, 3600.0))
+
+
+def test_removal_walk_back_stops_at_a_long_analyzable_stretch():
+    x = np.concatenate([_sine(3600), _sine(60) * 10, _sine(600), _tone(7200)])
+    q = assess_quality(x, FS)
+    assert (q.duration_sec, q.trimmed_sec) == (4260.0, 7200.0)
+    assert q.excluded == ((0.0, 60.0), (3598.0, 3662.0), (4200.0, 4260.0))
