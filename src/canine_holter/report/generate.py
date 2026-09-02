@@ -18,7 +18,7 @@ from canine_holter.arrhythmia.burden import (
     pvc_runs,
     run_stats,
 )
-from canine_holter.classify.rules import BASELINE_WINDOW
+from canine_holter.classify.rules import BASELINE_WINDOW, ESCAPE_RR_RATIO
 from canine_holter.report.reference import (
     ANALYZED_BAND,
     COUNT_BAND,
@@ -41,11 +41,17 @@ MAX_STRIPS_PER_SECTION = 24  # 12 PDF pages at 2 strips/page; never a silent cap
 EXTREMES_TITLE = "Heart-rate extremes, longest pause, fastest run"
 EVENTS_TITLE = "Flagged events (couplets, triplets, VT runs)"
 ISOLATED_TITLE = "Isolated PVCs"
+ESCAPE_TITLE = "Ventricular escape beats"
+ESCAPE_SIGNIFICANCE = (
+    "An escape beat is the ventricle stepping in after a long gap, so the gap is the finding (see the"
+    " pauses), not the beat. Several in a row at a slow rate are an idioventricular rhythm, worth a"
+    " cardiologist's look."
+)
 HOURLY_TITLE = "One strip per hour"
 MAX_HOURLY_STRIPS = 48  # two days of hours; stated in the heading when it applies
 HOURLY_HEADER = [
     "Hour", "Analyzed (min)", "Beats", "Min HR", "Mean HR", "Max HR", "PVCs", "Couplets",
-    f"Runs ({MIN_RUN_BEATS}+)", "Pauses",
+    f"Runs ({MIN_RUN_BEATS}+)", "Escapes", "Pauses",
 ]
 FASTEST_HR_SIGNIFICANCE = "Fast rates during play or excitement are expected; a rate this fast at rest is not."
 SLOWEST_HR_SIGNIFICANCE = "Resting dogs commonly slow to this (sinus arrhythmia)."
@@ -65,7 +71,8 @@ HOW_TO_READ_STRIPS = [  # under 100 characters a line: they print at 10 pt acros
     "movement or a loose electrode.",
     "",
     "Above the top row every detected beat has a label: N for a normal beat, V for a beat the",
-    "software calls a PVC (premature ventricular complex), ? when it could not measure the beat.",
+    "software calls a PVC (premature ventricular complex), E for a ventricular escape beat (wide,",
+    "but late instead of early: the ventricle filling a gap), ? when it could not measure the beat.",
     "The beats each strip is about are shaded red, and the time from the previous beat to the",
     "shaded beat, and from it to the next, is printed in seconds.",
     "",
@@ -200,6 +207,7 @@ def _hourly_rows(summary: ArrhythmiaSummary, start_time: datetime | None) -> lis
             str(row.pvcs),
             str(row.couplets),
             str(row.runs),
+            str(row.escapes),
             str(row.pauses),
         ]
         for row in summary.hourly
@@ -284,6 +292,7 @@ def _ectopy_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> Su
         SummaryRow("Couplets", str(summary.couplets), COUNT_BAND, count_status(summary.couplets)),
         SummaryRow("Triplets", str(summary.triplets), COUNT_BAND, count_status(summary.triplets)),
         SummaryRow("VT runs (4+)", str(summary.vtach_runs), COUNT_BAND, count_status(summary.vtach_runs)),
+        SummaryRow("Escape beats", str(len(summary.escape_beats)), f"wide, RR >= {ESCAPE_RR_RATIO:g}x local"),
         SummaryRow("Longest run", _run_text(longest, start_time) if longest else "none"),
         SummaryRow(
             "Fastest run",
@@ -412,6 +421,28 @@ def _section(title: str, runs: list[list[Beat]], beats: list[Beat], start_time: 
     ])
 
 
+def _escape_caption(index: int, beat: Beat, beats: list[Beat], start_time: datetime | None) -> StripCaption:
+    typical_rr, typical_qrs = _typical(beats, next(i for i, b in enumerate(beats) if b.time == beat.time))
+    what = (
+        f"The marked beat arrived {_sec(beat.rr_interval)} after the beat before it (typical here"
+        f" {_sec(typical_rr)}) and its QRS lasts {_sec(beat.qrs_duration)} (typical {_sec(typical_qrs)}):"
+        " wide and late is what makes it a ventricular escape beat."
+    )
+    return StripCaption(f"Escape beat {index + 1} · {short_time(beat.time, start_time)}", what, ESCAPE_SIGNIFICANCE)
+
+
+def _escape_section(beats: list[Beat], start_time: datetime | None) -> StripSection | None:
+    """Every escape beat gets a strip, capped like the PVC sections: the
+    width call behind an E is as reviewable, and as fallible, as a V."""
+    escapes = [b for b in beats if b.label == "E"]
+    if not escapes:
+        return None
+    shown = select_evenly(escapes, MAX_STRIPS_PER_SECTION)
+    return StripSection(_capped_heading(ESCAPE_TITLE, len(shown), len(escapes)), [
+        StripItem([beat], _escape_caption(i, beat, beats, start_time)) for i, beat in enumerate(shown)
+    ])
+
+
 def _hour_rate_text(row: HourRow) -> str:
     if row.mean_bpm is None:
         return "Too few beats this hour for a rate."
@@ -497,14 +528,15 @@ def _extremes_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time:
 def build_content(beats: list[Beat], summary: ArrhythmiaSummary, start_time: datetime | None) -> ReportContent:
     """Assemble the report content: summary panels, the strip sections
     (heart-rate extremes, then flagged multi-beat runs, then isolated PVCs,
-    then one strip per hour; the capped sections state their cap in the
-    heading), and the hourly table. Event times are wall-clock labels
+    then ventricular escape beats, then one strip per hour; the capped
+    sections state their cap in the heading), and the hourly table. Event times are wall-clock labels
     when start_time is known."""
     runs = pvc_runs(beats)
     sections = [
         _extremes_section(beats, summary, start_time),
         _section(EVENTS_TITLE, [r for r in runs if len(r) >= 2], beats, start_time),
         _section(ISOLATED_TITLE, [r for r in runs if len(r) == 1], beats, start_time),
+        _escape_section(beats, start_time),
         _hourly_section(beats, summary, start_time),
     ]
     return ReportContent(

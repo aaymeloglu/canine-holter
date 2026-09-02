@@ -56,7 +56,7 @@ def channel_range_mv(segments: Sequence[np.ndarray]) -> float:
 
 
 def _beat_label(beat: Beat) -> str:
-    return beat.label if beat.label in ("N", "V") else "?"
+    return beat.label if beat.label in ("N", "V", "E") else "?"
 
 
 def _grid(ax: Axes) -> None:
