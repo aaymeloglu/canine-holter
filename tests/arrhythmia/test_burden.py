@@ -460,3 +460,56 @@ def test_hourly_rows_count_escape_beats_in_their_hour():
     beats[8000] = Beat(time=beats[8000].time, rr_interval=0.5, qrs_duration=0.14, label="E")
     rows = summarize(beats).hourly
     assert [r.escapes for r in rows] == [1, 1, 0]
+
+
+# --- sinus arrest bridged by escape beats, escape runs, the 60 bpm line -------
+from canine_holter.arrhythmia.burden import BRADYCARDIA_LINE_BPM, SinusArrest, escape_runs, sinus_arrests  # noqa: E402
+
+
+def test_sinus_arrest_spans_from_the_sinus_beat_before_the_escape_beat_to_the_one_after():
+    beats = _chain([None, 0.8, 0.8, 2.0, 1.0, 0.8], ["N", "N", "N", "E", "N", "N"])
+    assert sinus_arrests(beats) == [SinusArrest(start_time=1.6, end_time=4.6, escape_beats=1)]
+    assert sinus_arrests(beats)[0].duration_sec == pytest.approx(3.0)
+
+
+def test_sinus_arrest_counts_every_escape_beat_in_the_gap():
+    beats = _chain([None, 0.8, 2.0, 2.0, 1.0], ["N", "N", "E", "E", "N"])
+    assert sinus_arrests(beats) == [SinusArrest(start_time=0.8, end_time=5.8, escape_beats=2)]
+
+
+def test_sinus_arrest_is_not_counted_across_a_missing_rr():
+    # A quality-gate boundary resets the RR: the gap is not a measured interval.
+    beats = _chain([None, 0.8, None, 1.0, 0.8], ["N", "N", "E", "N", "N"])
+    assert sinus_arrests(beats) == []
+
+
+def test_longest_sinus_interval_is_the_longer_of_a_bridged_arrest_and_a_plain_sinus_gap():
+    bridged = _chain([None, 0.8, 2.0, 1.0, 0.8], ["N", "N", "E", "N", "N"])       # 3.0 s bridged
+    plain = _chain([None, 0.8, 3.5, 0.8], ["N", "N", "N", "N"])                   # 3.5 s plain RR
+    assert summarize(bridged).longest_sinus_interval == SinusArrest(0.8, 3.8, 1)
+    assert summarize(plain).longest_sinus_interval == SinusArrest(0.8, 4.3, 0)
+    assert summarize(bridged).longest_sinus_interval.duration_sec == pytest.approx(3.0)
+    assert summarize(_chain([None, 0.8], ["N", "V"])).longest_sinus_interval is None
+
+
+def test_summary_lists_sinus_arrests_and_longest_pause_stays_the_longest_rr():
+    beats = _chain([None, 0.8, 2.0, 1.0, 0.8], ["N", "N", "E", "N", "N"])
+    s = summarize(beats)
+    assert [a.escape_beats for a in s.sinus_arrests] == [1]
+    assert s.longest_pause_sec == pytest.approx(2.0)
+
+
+def test_escape_runs_group_consecutive_escape_beats_and_the_summary_counts_them():
+    beats = _chain([None, 0.8, 2.0, 2.0, 1.0, 2.0, 2.0, 2.0, 1.0, 2.0, 0.8],
+                   ["N", "N", "E", "E", "N", "E", "E", "E", "N", "E", "N"])
+    assert [len(r) for r in escape_runs(beats)] == [2, 3, 1]
+    s = summarize(beats)
+    assert (s.escape_couplets, s.escape_runs) == (1, 1)
+
+
+def test_share_of_beats_under_the_60_bpm_line_is_reported_beside_the_class_threshold():
+    beats = _chain([None] + [1.2] * 9 + [0.5] * 9)  # 50 bpm then 120 bpm
+    s = summarize(beats, dog_weight_class="large")  # class threshold 45
+    assert BRADYCARDIA_LINE_BPM == 60
+    assert s.slow_beats == 0  # nothing under 45
+    assert s.slow_beats_at_line == 7  # the 50 bpm windows are under 60
