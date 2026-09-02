@@ -8,11 +8,12 @@ import pytest
 from canine_holter.detection.detect import detect_beats
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "..", "fixtures", "teeny_2026-08-25")
+FIXTURES_DIR_0827 = os.path.join(os.path.dirname(__file__), "..", "fixtures", "teeny_2026-08-27")
 MATCH_TOLERANCE_SEC = 0.15
 
 
-def _load(name):
-    z = np.load(os.path.join(FIXTURES_DIR, f"{name}.npz"))
+def _load(name, fixtures_dir=FIXTURES_DIR):
+    z = np.load(os.path.join(fixtures_dir, f"{name}.npz"))
     return z["channels"].astype(float), float(z["sample_rate"]), z["beat_times"]
 
 
@@ -59,3 +60,17 @@ def test_detect_beats_on_teeny_window_all_leads(name, min_sensitivity, min_preci
     sensitivity, precision = _sensitivity_precision(detected, truth)
     assert sensitivity >= min_sensitivity, f"{name}: found {len(detected)} of {len(truth)} beats; sensitivity {sensitivity:.2f}"
     assert precision >= min_precision, f"{name}: {len(detected)} detections for {len(truth)} beats; precision {precision:.2f}"
+
+
+# Ventricular escape beats while asleep on the 2026-08-27 DR400 recording:
+# on Ch 2 and Ch 3 the QRS is a small r and a deep S with no local maximum
+# inside the gradient burst, which NeuroKit's own rule drops. Each window
+# holds one such beat among ordinary sleeping-rhythm beats; missing it
+# turns a 2.4 s interval into a false 4.5-4.7 s pause.
+@pytest.mark.parametrize("name", ["escape_a", "escape_b"])
+def test_detect_beats_finds_the_escape_beat_no_lead_shows_as_a_local_maximum(name):
+    channels, sample_rate, truth = _load(name, FIXTURES_DIR_0827)
+    detected = [b.time for b in detect_beats(channels, sample_rate)]
+    sensitivity, precision = _sensitivity_precision(detected, truth)
+    assert sensitivity == 1.0, f"{name}: found {len(detected)} of {len(truth)} beats; sensitivity {sensitivity:.2f}"
+    assert precision == 1.0, f"{name}: {len(detected)} detections for {len(truth)} beats; precision {precision:.2f}"
