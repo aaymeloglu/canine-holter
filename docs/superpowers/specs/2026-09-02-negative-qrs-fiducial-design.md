@@ -50,13 +50,37 @@ how the cause was confirmed.
 `detection/detect.py` gets `_qrs_fiducials(cleaned, sample_rate)`, a copy
 of NeuroKit's burst logic with the same parameters (0.1 s smoothing,
 0.75 s average, 1.5x threshold, 0.4x minimum burst length, 0.3 s minimum
-delay) and the same most-prominent-local-maximum rule, plus one fallback:
-a burst that has no local maximum takes the sample of largest absolute
-deflection from the median of the 0.2 s before the burst. Every beat
-NeuroKit finds today keeps exactly its fiducial, so widths, agreement, and
-the PVC calls are unchanged; only bursts that were dropped gain a beat.
-`_lead_peaks` calls it in place of `nk.ecg_peaks`; `nk.ecg_clean` and the
-three correction passes are untouched.
+delay) and the same most-prominent-local-maximum rule. It returns two
+arrays: the *resolved* fiducials, which are exactly what `nk.ecg_peaks`
+returns, and a *fallback* fiducial for every burst that has no local
+maximum, placed by the existing `_fiducial` rule at the largest absolute
+deflection within 50 ms of the burst's steepest sample (the T wave, when
+the burst runs on into it, is not the steepest part).
+
+A fallback is not a beat on its own. `_lead_peaks` runs the three
+single-lead correction passes on the resolved fiducials only, so
+single-lead detection is unchanged to the sample, then adds the
+fallbacks that survive two filters: the amplitude rule judged against
+the resolved peaks' median, and a proximity rule that drops a fallback
+within 0.45 s (`T_WAVE_MAX_COUPLING_SEC`) after a resolved peak, which is
+that beat's T wave, or within 0.3 s before one, which is part of that
+beat. `_agree` then requires a cluster to contain at least one resolved
+fiducial as well as two leads. So a lead that shows a QRS as a bare
+trough can vote for a beat another lead saw, and a lead's negative T
+waves can never make one.
+
+### What was tried on the way
+
+- Letting the fallback stand alone: the `lying` fixture's single lead
+  gained a detection on a T trough whose QRS that lead never resolves,
+  and the `tachy` fixture lost three beats because fallbacks inside the
+  correction passes stopped the fast-gap search-back from filling real
+  gaps. Both fixed by the corroborate-only rule and by keeping fallbacks
+  out of the passes.
+- Sharing NeuroKit's 0.3 s minimum delay between resolved and fallback
+  fiducials: a fallback T trough then blocked the next resolved QRS at
+  fast rates. The delay for resolved fiducials is now against resolved
+  fiducials only, so they match NeuroKit exactly.
 
 The copied logic is ~25 lines under NeuroKit2's MIT licence; the function's
 docstring says where it comes from so a future NeuroKit change is easy to
@@ -64,22 +88,25 @@ compare against.
 
 ## Acceptance
 
-Measured on the prototype before implementation:
+Measured with the implemented detector:
 
 | | 2026-08-27 before | after | 2026-08-25 before | after |
 |---|---|---|---|---|
-| Beats | 84,562 | 84,602 | 86,246 | 86,261 |
-| PVC flags | 7 (same 7 times) | 7 | 7 (same 7 times) | 7 |
+| Beats | 84,562 | 84,572 | 86,246 | 86,253 |
+| PVC flags | 7 | the same 7 | 7 | the same 7 |
 | Longest RR | 4.73 s at 06:35:47 | 4.34 s at 03:15:46 | 5.21 s at 03:07:36 | 4.67 s at 17:06:30 |
-| Pauses >= 2.5 s | 1772 | 1768 | 878 | 875 |
-| Shortest RR | 0.222 s | 0.222 s | 0.206 s | 0.206 s |
+| Pauses >= 2.5 s | 1772 | 1768 | 878 | 876 |
+| Shortest RR | 0.228 s | 0.228 s | 0.206 s | 0.206 s |
 
-Two new hand-counted fixtures, `escape_a` (06:34:54, 20 s) and `escape_b`
-(06:35:37, 20 s) from the 08-27 recording, each hold one of the missed
-beats among ordinary sleeping-rhythm beats; all-lead detection must score
-1.00 sensitivity and precision on both. A unit test shows that a train of
-V-shaped negative complexes, which NeuroKit misses entirely, is found at
-its troughs, and that a positive train yields exactly NeuroKit's peaks.
+Two new hand-counted fixtures, `escape_a` (06:34:53, 21 s) and `escape_b`
+(06:35:36, 21 s) from the 08-27 recording, each hold one of the missed
+beats among ordinary sleeping-rhythm beats; all-lead detection scores
+1.00 sensitivity and precision on both, and every earlier fixture keeps
+its score. Unit tests show that a positive train resolves exactly
+NeuroKit's peaks with no fallbacks, that a train of wide negative
+complexes NeuroKit drops yields fallbacks on the troughs, that such a lead
+alone yields no beat NeuroKit would not, and that beside a positive lead
+it corroborates every beat.
 
 ## Not changed
 
