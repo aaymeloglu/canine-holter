@@ -4,7 +4,7 @@ Guidance for agents working in this repository.
 
 ## Purpose and safety boundary
 
-This tool reads ambulatory canine ECG recordings and screens for PVC burden, PVC patterns, bradycardia, tachycardia, and pauses. It currently targets the ALBA Medical DR200 recorder.
+This tool reads ambulatory canine ECG recordings and screens for PVC burden, PVC patterns, bradycardia, tachycardia, and pauses. It targets the NorthEast Monitoring DR200 and DR400 recorders, which share one native format.
 
 **It is a screening/triage aid, not a diagnostic tool, and does not replace a cardiologist's read.** Every generated report must retain that disclaimer. Comparing measurements with published reference bands, including green/amber/red presentation, is expected; the disclaimer carries the not-a-diagnosis framing.
 
@@ -21,7 +21,7 @@ ingest → quality → detection → classify → arrhythmia → report
 `pipeline.py` wires the stages; the CLI and GUI drive it. Stages exchange only the public data structures in `types.py` and `arrhythmia/burden.py`. Keep detection, quality, classification, and aggregation format-agnostic, and do not import another stage's private helpers.
 
 - `ingest/`: supported files become a `Recording`. `loader.load_recording()` routes WFDB records, native DR200 `flash.dat`, and vendor-extracted `flashcN.dat`/`.raw` channels.
-- `quality/gate.py`: returns recording duration and excluded artifact spans. `exclude_beats()` drops beats inside those spans and resets the first RR afterward so artifact cannot become a pause, run, or rate event. Kurtosis and spectral-noise rules were rejected because they excluded ventricular flutter/VT; read the signal-quality spec before adding a noise rule.
+- `quality/gate.py`: returns recording duration, excluded artifact spans, and the length of any trimmed off-body tail. `exclude_beats()` drops beats inside those spans and resets the first RR afterward so artifact cannot become a pause, run, or rate event. The lead-off rule catches the DR400's open-electrode tone (a square wave at half the sample rate) and the amplitude median ignores tone and flat windows. Kurtosis and spectral-noise rules were rejected because they excluded ventricular flutter/VT; read the signal-quality spec before adding a noise rule.
 - `detection/detect.py`: NeuroKit2 R-peak detection plus custom QRS width measurement. Its amplitude window must cover the whole ±150 ms QRS search range. Rate-gated search-back and T-wave rejection address separate, locally gated failure modes. Extend the hand-counted Teeny fixtures before retuning thresholds.
 - `classify/rules.py`: causal rolling-baseline rules. A PVC must be both premature and wide. The sequential loop is intentional; future beats must never influence the current beat.
 - `arrhythmia/burden.py`: produces `ArrhythmiaSummary`, including burden, runs, pauses, rate events, heart-rate statistics, quality accounting, and hourly rows.
@@ -42,17 +42,19 @@ The downstream pipeline is sample-rate-agnostic and has been exercised at 180, 3
 
 Version 1 is deliberately rules-based. There is no public canine-labeled PVC dataset sufficient for a learned classifier, and human data is not a substitute for canine validation. A learned classifier belongs behind the existing classification boundary only after cardiologist-reviewed canine ground truth exists.
 
-## Native DR200 format
+## Native DR200/DR400 format
 
-Do not re-reverse-engineer `flash.dat`; the evidence and full specification are in `docs/dr200-format.md`, and the parser is `ingest/dr200.py`.
+Do not re-reverse-engineer `flash.dat`; the evidence and full specification are in `docs/dr200-format.md`, and the parser is `ingest/dr200.py`. Both recorders write the same format.
 
 - Blocks are 512 bytes: length, type, source position, 456 data bytes, reserved bytes, and checksum.
 - Every active block satisfies `sum(block[:508]) + u32(block[508:]) == 0x4CB31`.
 - `SampleStorageFormat=1` uses low-nibble-first, three-channel, nonlinear four-bit deltas accumulated continuously across blocks.
 - The delta table is `0, +1, +3, +6, +12, +21, +38, +70, pace, -70, -38, -21, -12, -6, -3, -1`. Nibble 8 is a simultaneous pacemaker marker on all three channels, not a voltage delta.
 - Scaling is 12.5 µV per count.
+- Bytes 466..472 of an ECG block are the recording sequence number and recorder serial; the parser stops at the first ECG block whose pair differs from the first block's, because a reused card keeps older recordings' blocks with valid checksums and sometimes contiguous source positions.
 - The table and decode loop were validated byte-for-byte against NorthEast's `unpackdc` output. Revalidate against that independent oracle after any decoder change; never validate an encoder and decoder built from the same table against each other.
 - Native support is intentionally limited to 180 Hz, three-channel format 1. Reject other modes rather than guessing.
+- A native file is recognized by the name `flash.dat` or by its first block's content, so renamed copies load.
 
 ## Testing
 

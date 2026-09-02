@@ -55,7 +55,7 @@ def choose_recording(state: AppState) -> AppState:
         filetypes=[
             ("Supported recordings", "*.hea *.dat *.raw"),
             ("WFDB headers", "*.hea"),
-            ("DR200 flash.dat / decoded channels", "*.dat *.raw"),
+            ("DR200/DR400 flash.dat / decoded channels", "*.dat *.raw"),
             ("All files", "*"),
         ],
     )

@@ -12,8 +12,8 @@ def main() -> None:
     parser.add_argument(
         "input",
         help=(
-            "WFDB record (.hea or base path), native DR200 flash.dat, or decoded "
-            "DR200 channel (flashc0.dat/flashc1.dat/flashc2.dat/.raw)"
+            "WFDB record (.hea or base path), native DR200/DR400 flash.dat (any "
+            "name), or decoded channel (flashc0.dat/flashc1.dat/flashc2.dat/.raw)"
         ),
     )
     parser.add_argument("--out", required=True, help="Output directory for the report")
