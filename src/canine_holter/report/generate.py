@@ -7,8 +7,11 @@ import numpy as np
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import (
     HR_EXTREME_WINDOW_BEATS,
+    LONG_PAUSE_THRESHOLD_SEC,
     MIN_RUN_BEATS,
+    MIN_SUCCESSIVE_DIFFERENCES,
     PAUSE_THRESHOLD_SEC,
+    SUSTAINED_EVENT_MIN_BEATS,
     ArrhythmiaSummary,
     HourRow,
     RunStats,
@@ -218,9 +221,14 @@ def _recording_group(summary: ArrhythmiaSummary, start_time: datetime | None) ->
     ])
 
 
+def _share(count: int, total: int) -> str:
+    return f"{count} ({100.0 * count / total:.0f}%)" if total else "0 (0%)"
+
+
 def _heart_rate_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> SummaryGroup:
     hr = summary.heart_rate
     window = f"{HR_EXTREME_WINDOW_BEATS}-beat median"
+    brady, tachy = summary.brady_threshold_bpm, summary.tachy_threshold_bpm
     if hr is None:
         rate_rows = [
             SummaryRow("Heart rate", f"not computed (fewer than {HR_EXTREME_WINDOW_BEATS} beats with an RR)")
@@ -230,11 +238,24 @@ def _heart_rate_group(summary: ArrhythmiaSummary, start_time: datetime | None) -
             SummaryRow("Mean", f"{hr.mean_bpm:.0f} bpm"),
             SummaryRow("Slowest", f"{hr.min_bpm:.0f} bpm at {short_time(hr.min_time, start_time)}", window),
             SummaryRow("Fastest", f"{hr.max_bpm:.0f} bpm at {short_time(hr.max_time, start_time)}", window),
+            SummaryRow(f"Below {brady:g} bpm", _share(summary.slow_beats, summary.rated_beats), window),
+            SummaryRow(f"Above {tachy:g} bpm", _share(summary.fast_beats, summary.rated_beats), window),
         ]
     return SummaryGroup("Heart rate", rate_rows + [
-        SummaryRow("Brady events", str(len(summary.bradycardia_events))),
-        SummaryRow("Tachy events", str(len(summary.tachycardia_events))),
+        SummaryRow(
+            "Brady events", str(len(summary.bradycardia_events)), f"{SUSTAINED_EVENT_MIN_BEATS}+ beats < {brady:g} bpm"
+        ),
+        SummaryRow(
+            "Tachy events", str(len(summary.tachycardia_events)), f"{SUSTAINED_EVENT_MIN_BEATS}+ beats > {tachy:g} bpm"
+        ),
     ])
+
+
+def _supraventricular_group() -> SummaryGroup:
+    """Stated, not counted: a premature narrow beat cannot be told from
+    sinus arrhythmia by timing alone (pNN50 runs ~70% in a resting dog),
+    and P waves are not analyzed. Absent must read as absent, not zero."""
+    return SummaryGroup("Supraventricular ectopy", [SummaryRow("SVPBs", "not assessed", "needs P-wave analysis")])
 
 
 def _run_text(run: RunStats, start_time: datetime | None) -> str:
@@ -270,19 +291,38 @@ def _pause_group(summary: ArrhythmiaSummary) -> SummaryGroup:
     longest = summary.longest_pause_sec
     return SummaryGroup("Pauses", [
         SummaryRow("Pauses", str(len(summary.pauses)), f">= {PAUSE_THRESHOLD_SEC:g} s"),
+        SummaryRow(f"Pauses > {LONG_PAUSE_THRESHOLD_SEC:g} s", str(summary.long_pauses)),
         SummaryRow(
             "Longest", f"{longest:.2f} s" if longest is not None else "n/a", PAUSE_BAND, pause_status(longest)
         ),
     ])
 
 
+def _variability_group(summary: ArrhythmiaSummary) -> SummaryGroup:
+    """Uncoloured: there are no canine reference bands for these."""
+    hrv = summary.heart_rate_variability
+    if hrv is None:
+        rows = [SummaryRow(
+            "RR variability", f"not computed (fewer than {MIN_SUCCESSIVE_DIFFERENCES} successive NN differences)"
+        )]
+    else:
+        rows = [
+            SummaryRow("SDNN", f"{hrv.sdnn_ms:.0f} ms", f"{hrv.nn_intervals} NN intervals"),
+            SummaryRow("RMSSD", f"{hrv.rmssd_ms:.0f} ms"),
+            SummaryRow("pNN50", f"{hrv.pnn50_pct:.0f}%"),
+        ]
+    return SummaryGroup("RR variability", rows)
+
+
 def summary_groups(summary: ArrhythmiaSummary, start_time: datetime | None) -> list[SummaryGroup]:
-    """The four summary panels, in reading order."""
+    """The six summary panels, in reading order (a 3x2 grid on the page)."""
     return [
         _recording_group(summary, start_time),
         _heart_rate_group(summary, start_time),
         _ectopy_group(summary, start_time),
+        _supraventricular_group(),
         _pause_group(summary),
+        _variability_group(summary),
     ]
 
 

@@ -149,6 +149,23 @@ def test_summary_page_renders_groups_with_status_colors_and_footer():
     plt.close(fig)
 
 
+def test_summary_page_lays_the_six_panels_out_in_three_rows():
+    import matplotlib.pyplot as plt
+    from canine_holter.report.pdf import _PANEL_TOP, _summary_page
+
+    assert len(_PANEL_TOP) == 3
+    beats = _beats_with_couplets(1)
+    fig = _summary_page(build_content(beats, summarize(beats), None))
+    titles = [t.get_text() for t in fig.texts if t.get_text().isupper() and t.get_fontweight() == "bold"]
+    assert titles == [
+        "RECORDING", "HEART RATE", "VENTRICULAR ECTOPY", "SUPRAVENTRICULAR ECTOPY", "PAUSES", "RR VARIABILITY"
+    ]
+    # The footer sits below the third row of panels.
+    footer_y = min(t.get_position()[1] for t in fig.texts if "not a diagnosis" in t.get_text())
+    assert footer_y < _PANEL_TOP[2] - 0.1
+    plt.close(fig)
+
+
 def test_significance_line_wraps_instead_of_running_off_the_page():
     from canine_holter.report.generate import StripCaption
     from canine_holter.report.pdf import _CAPTION_WRAP, _significance_lines

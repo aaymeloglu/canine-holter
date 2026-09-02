@@ -1,4 +1,4 @@
-"""Renders ReportContent as the PDF: the four summary panels on page 1,
+"""Renders ReportContent as the PDF: the six summary panels on page 1,
 the timeline with the hourly table on page 2 (the table continues on
 pages of its own for recordings longer than a day), then a one-page primer
 on reading strips, then two three-lead strips per page for each section
@@ -41,7 +41,7 @@ REFERENCE_COLOR = "#6f6e6b"
 _PANEL_X = (_LEFT, 0.53)  # left edge of each panel column
 _PANEL_W = 0.42
 _VALUE_DX = 0.12  # value column offset inside a panel
-_PANEL_TOP = (0.86, 0.68)  # top of each panel row
+_PANEL_TOP = (0.86, 0.68, 0.50)  # top of each panel row; the tallest panel (seven rows) fits the 0.18 pitch
 
 _STRIP_LEFT = 0.17  # leaves room for the lead names left of the strip
 _STRIP_W = STRIP_WIDTH_MM / _PAGE_MM[0]  # 6 s at 25 mm/s, as a figure fraction
@@ -78,7 +78,7 @@ def _draw_group(fig: Figure, x: float, y: float, group: SummaryGroup) -> float:
 
 
 def _summary_page(content: ReportContent) -> Figure:
-    """Title, disclaimer, the four panels in a 2x2 grid, then the legend and
+    """Title, disclaimer, the six panels in a 3x2 grid, then the legend and
     source lines."""
     fig = plt.figure(figsize=PAGE_SIZE_IN)
     y = 0.95

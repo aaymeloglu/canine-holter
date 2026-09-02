@@ -188,10 +188,12 @@ def _rows(content, title):
     return {r.label: r for r in group.rows}
 
 
-def test_content_has_four_summary_groups_in_order_and_a_footer():
+def test_content_has_six_summary_groups_in_order_and_a_footer():
     beats = _couplet_and_single()
     content = build_content(beats, summarize(beats), None)
-    assert [g.title for g in content.summary_groups] == ["Recording", "Heart rate", "Ventricular ectopy", "Pauses"]
+    assert [g.title for g in content.summary_groups] == [
+        "Recording", "Heart rate", "Ventricular ectopy", "Supraventricular ectopy", "Pauses", "RR variability",
+    ]
     assert any("not a diagnosis" in line for line in content.footer_lines)
 
 
@@ -256,8 +258,50 @@ def test_heart_rate_group_has_mean_and_timed_extremes():
     assert rows["Mean"] == SummaryRow("Mean", "120 bpm")
     assert rows["Slowest"].value.startswith("120 bpm at 15:33:") and rows["Slowest"].reference == "5-beat median"
     assert rows["Fastest"].value.startswith("120 bpm at 15:33:")
-    assert rows["Brady events"] == SummaryRow("Brady events", "0")
-    assert rows["Tachy events"] == SummaryRow("Tachy events", "0")
+    assert rows["Brady events"].value == "0" and rows["Tachy events"].value == "0"
+
+
+def test_heart_rate_group_shares_and_event_rules_name_the_thresholds():
+    beats = _steady(10, 0.5)  # 120 bpm: 6 windows, none slow or fast for a medium dog
+    rows = _rows(build_content(beats, summarize(beats), None), "Heart rate")
+    assert rows["Below 50 bpm"] == SummaryRow("Below 50 bpm", "0 (0%)", "5-beat median")
+    assert rows["Above 160 bpm"] == SummaryRow("Above 160 bpm", "0 (0%)", "5-beat median")
+    assert rows["Brady events"] == SummaryRow("Brady events", "0", "3+ beats < 50 bpm")
+    assert rows["Tachy events"] == SummaryRow("Tachy events", "0", "3+ beats > 160 bpm")
+
+
+def test_heart_rate_shares_show_count_and_percent():
+    beats = _steady(10, 0.3)  # 200 bpm: every window is fast
+    rows = _rows(build_content(beats, summarize(beats), None), "Heart rate")
+    assert rows["Above 160 bpm"].value == "5 (100%)"
+
+
+def test_supraventricular_group_says_not_assessed():
+    beats = _couplet_and_single()
+    rows = _rows(build_content(beats, summarize(beats), None), "Supraventricular ectopy")
+    assert rows["SVPBs"] == SummaryRow("SVPBs", "not assessed", "needs P-wave analysis")
+
+
+def test_pause_group_counts_pauses_over_five_seconds():
+    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(3.77, 2.97, "N"), _beat(9.77, 6.0, "N")]
+    rows = _rows(build_content(beats, summarize(beats), None), "Pauses")
+    assert rows["Pauses"].value == "2"
+    assert rows["Pauses > 5 s"] == SummaryRow("Pauses > 5 s", "1")
+    assert rows["Longest"].status == "alert"
+
+
+def test_variability_group_rounds_and_counts_nn_intervals():
+    beats = [_beat(0.0, None, "N"), _beat(0.8, 0.8, "N"), _beat(1.7, 0.9, "N"), _beat(2.5, 0.8, "N"), _beat(3.5, 1.0, "N")]
+    rows = _rows(build_content(beats, summarize(beats), None), "RR variability")
+    assert rows["SDNN"] == SummaryRow("SDNN", "83 ms", "4 NN intervals")
+    assert rows["RMSSD"] == SummaryRow("RMSSD", "141 ms")
+    assert rows["pNN50"] == SummaryRow("pNN50", "100%")
+
+
+def test_variability_group_says_when_not_computed():
+    beats = _steady(3, 0.5)
+    rows = _rows(build_content(beats, summarize(beats), None), "RR variability")
+    assert rows["RR variability"].value == "not computed (fewer than 2 successive NN differences)"
 
 
 def test_heart_rate_group_says_when_not_computed():
