@@ -32,7 +32,15 @@ def metadata_block(
     return finish_block(block)
 
 
-def data_block(encoded: np.ndarray, *, source_position: int = 5900) -> bytes:
+def data_block(
+    encoded: np.ndarray,
+    *,
+    source_position: int = 5900,
+    sequence: int = 4,
+    serial: int = 52837,
+) -> bytes:
+    """One ECG block. sequence/serial are the recording sequence number and
+    recorder serial number that every block of one recording repeats."""
     assert encoded.shape == (304, 3)
     nibbles = encoded.astype(np.uint8).reshape(-1)
     packed = nibbles[0::2] | (nibbles[1::2] << 4)
@@ -42,6 +50,7 @@ def data_block(encoded: np.ndarray, *, source_position: int = 5900) -> bytes:
     block[4] = 0x1E
     struct.pack_into("<I", block, 6, source_position)
     block[10:466] = packed.tobytes()
+    struct.pack_into("<HI", block, 466, sequence, serial)
     return finish_block(block)
 
 
