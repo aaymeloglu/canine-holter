@@ -156,20 +156,20 @@ def test_summary_page_renders_groups_with_status_colors_and_footer():
     plt.close(fig)
 
 
-def test_summary_page_lays_the_six_panels_out_in_three_rows():
+def test_summary_page_lays_six_panels_out_in_three_rows_top_down():
     import matplotlib.pyplot as plt
-    from canine_holter.report.pdf import _PANEL_TOP, _summary_page
+    from canine_holter.report.pdf import _summary_page
 
-    assert len(_PANEL_TOP) == 3
     beats = _beats_with_couplets(1)
     fig = _summary_page(build_content(beats, summarize(beats), None))
-    titles = [t.get_text() for t in fig.texts if t.get_text().isupper() and t.get_fontweight() == "bold"]
-    assert titles == [
+    titles = [t for t in fig.texts if t.get_text().isupper() and t.get_fontweight() == "bold"]
+    assert [t.get_text() for t in titles] == [
         "RECORDING", "HEART RATE", "VENTRICULAR ECTOPY", "SUPRAVENTRICULAR ECTOPY", "PAUSES", "RR VARIABILITY"
     ]
-    # The footer sits below the third row of panels.
+    ys = [t.get_position()[1] for t in titles]
+    assert ys[0] == ys[1] > ys[2] == ys[3] > ys[4] == ys[5]  # three rows, each pair level
     footer_y = min(t.get_position()[1] for t in fig.texts if "not a diagnosis" in t.get_text())
-    assert footer_y < _PANEL_TOP[2] - 0.1
+    assert footer_y < ys[4] - 0.05
     plt.close(fig)
 
 
@@ -177,21 +177,50 @@ def test_panels_never_run_into_the_row_below():
     import matplotlib.pyplot as plt
     from canine_holter.arrhythmia.burden import summarize
     from canine_holter.quality.gate import SignalQuality
-    from canine_holter.report.pdf import _PANEL_TOP, _draw_group
+    from canine_holter.report.pdf import _LINE_STEP, _summary_page
 
-    # The tallest content each panel can have: a trimmed tail (recording), rates
-    # (heart rate), and an escape beat (ventricular ectopy).
+    # The tallest content each panel can have: a trimmed tail (recording),
+    # rates at both lines (heart rate), escape beats and runs (ventricular
+    # ectopy), and a bridged arrest (pauses).
     beats = _beats_with_couplets(1)
-    beats[50] = Beat(time=beats[50].time, rr_interval=0.8, qrs_duration=0.14, label="E")
+    for i in (50, 51):
+        beats[i] = Beat(time=beats[i].time, rr_interval=0.8, qrs_duration=0.14, label="E")
     q = SignalQuality(200.0, ((0.0, 60.0),), trimmed_sec=3600.0)
-    content = build_content(beats, summarize(beats, quality=q), None)
-    fig = plt.figure(figsize=(8.5, 11))
-    for i, group in enumerate(content.summary_groups):
-        row = i // 2
-        bottom = _draw_group(fig, 0.1 + 0.45 * (i % 2), _PANEL_TOP[row], group)
-        if row + 1 < len(_PANEL_TOP):
-            # bottom is where a further row would start, one line step under the last row's text
-            assert bottom >= _PANEL_TOP[row + 1], f"{group.title} runs into the row below"
+    fig = _summary_page(build_content(beats, summarize(beats, dog_weight_class="large", quality=q), None))
+    # Every text of the page: no title may sit inside the vertical extent of a text in the row above it.
+    titles = [t for t in fig.texts if t.get_text().isupper() and t.get_fontweight() == "bold"]
+    rows_y = sorted({round(t.get_position()[1], 4) for t in titles}, reverse=True)
+    for upper, lower in zip(rows_y, rows_y[1:]):
+        lowest_text_above = min(
+            t.get_position()[1] for t in fig.texts
+            if lower < t.get_position()[1] <= upper
+        )
+        assert lowest_text_above - lower >= _LINE_STEP, "a panel runs into the row below"
+    plt.close(fig)
+
+
+def test_no_summary_row_text_overlaps_its_neighbour():
+    import matplotlib.pyplot as plt
+    from canine_holter.arrhythmia.burden import summarize
+    from canine_holter.quality.gate import SignalQuality
+    from canine_holter.report.pdf import _summary_page
+
+    # Wide content in every column: a trimmed tail, timed extremes, a fast
+    # run with its rate and time, a bridged sinus arrest, escape couplets.
+    beats = _beats_with_couplets(1)
+    for i in (50, 51):
+        beats[i] = Beat(time=beats[i].time, rr_interval=0.8, qrs_duration=0.14, label="E")
+    for i in (120, 121, 122, 123):
+        beats[i] = Beat(time=beats[i].time, rr_interval=0.25, qrs_duration=0.14, label="V")
+    q = SignalQuality(200.0, ((0.0, 60.0),), trimmed_sec=3600.0)
+    content = build_content(beats, summarize(beats, dog_weight_class="large", quality=q), datetime(2026, 8, 27, 10, 18, 49))
+    fig = _summary_page(content)
+    renderer = fig.canvas.get_renderer()
+    boxes = [(t.get_text(), t.get_window_extent(renderer)) for t in fig.texts if t.get_text().strip()]
+    for (a, ba), (b, bb) in ((x, y) for i, x in enumerate(boxes) for y in boxes[i + 1:]):
+        same_line = abs(ba.y0 - bb.y0) < ba.height / 2
+        if same_line and ba.x0 < bb.x1 and bb.x0 < ba.x1:
+            raise AssertionError(f"{a!r} overlaps {b!r}")
     plt.close(fig)
 
 

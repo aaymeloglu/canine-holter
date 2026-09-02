@@ -40,8 +40,9 @@ LABEL_COLOR = "#52514e"
 REFERENCE_COLOR = "#6f6e6b"
 _PANEL_X = (_LEFT, 0.53)  # left edge of each panel column
 _PANEL_W = 0.42
-_VALUE_DX = 0.12  # value column offset inside a panel
-_PANEL_TOP = (0.86, 0.68, 0.46)  # top of each panel row; the middle row holds the tallest panel (ventricular ectopy, eight rows)
+_VALUE_DX = 0.145  # value column offset inside a panel; the widest labels (Escape couplets, Sinus interval) need this at 9 pt
+_PANEL_FIRST_TOP = 0.86  # top of the first panel row; each later row starts under the tallest panel of the row above
+_PANEL_GAP = 0.025
 
 _STRIP_LEFT = 0.17  # leaves room for the lead names left of the strip
 _STRIP_W = STRIP_WIDTH_MM / _PAGE_MM[0]  # 6 s at 25 mm/s, as a figure fraction
@@ -86,17 +87,19 @@ def _draw_group(fig: Figure, x: float, y: float, group: SummaryGroup) -> float:
 
 
 def _summary_page(content: ReportContent) -> Figure:
-    """Title, disclaimer, the six panels in a 3x2 grid, then the legend and
-    source lines."""
+    """Title, disclaimer, the six panels in a 3x2 grid stacked from the
+    tallest panel of each row, then the legend and source lines."""
     fig = plt.figure(figsize=PAGE_SIZE_IN)
     y = 0.95
     fig.text(_LEFT, y, content.title, va="top", fontsize=16, fontweight="bold")
     y -= 0.035
     fig.text(_LEFT, y, content.disclaimer, va="top", fontsize=10, fontstyle="italic")
-    bottom = 1.0
-    for i, group in enumerate(content.summary_groups):
-        bottom = min(bottom, _draw_group(fig, _PANEL_X[i % 2], _PANEL_TOP[i // 2], group))
-    _text_block(fig, bottom - 0.02, content.footer_lines, fontsize=8, color=REFERENCE_COLOR)
+    top = _PANEL_FIRST_TOP
+    groups = content.summary_groups
+    for row in range(0, len(groups), 2):
+        bottom = min(_draw_group(fig, _PANEL_X[i], top, group) for i, group in enumerate(groups[row:row + 2]))
+        top = bottom - _PANEL_GAP
+    _text_block(fig, top, content.footer_lines, fontsize=8, color=REFERENCE_COLOR)
     return fig
 
 

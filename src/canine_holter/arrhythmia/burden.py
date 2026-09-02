@@ -9,6 +9,7 @@ from canine_holter.types import Beat
 PAUSE_THRESHOLD_SEC = 2.5
 LONG_PAUSE_THRESHOLD_SEC = 5.0  # the report's concern line (report/reference.py PAUSE_CONCERN_SEC), counted beside the 2.5 s pauses so a vendor report with a higher pause setting reads side by side
 BRADYCARDIA_HR_THRESHOLD = {"small": 60, "medium": 50, "large": 45}
+BRADYCARDIA_LINE_BPM = 60.0  # the line the cardiologist's interpretation reads against ("49% of beats at 60 bpm or less"), reported beside the class threshold
 TACHYCARDIA_HR_THRESHOLD = {"small": 180, "medium": 160, "large": 150}
 SUSTAINED_EVENT_MIN_BEATS = 3  # consecutive beats needed to call it "sustained"
 HR_EXTREME_WINDOW_BEATS = 5  # min/max HR are medians over this many RRs, so one phantom beat can't set them
@@ -38,6 +39,20 @@ class HeartRateVariability:
     rmssd_ms: float
     pnn50_pct: float
     nn_intervals: int
+
+
+@dataclass(frozen=True)
+class SinusArrest:
+    """An interval between consecutive sinus beats, the escape beats inside
+    it counted. The longest RR under-reads sinus arrest when an escape beat
+    interrupts it; this is the interval the sinus node actually missed."""
+    start_time: float
+    end_time: float
+    escape_beats: int
+
+    @property
+    def duration_sec(self) -> float:
+        return self.end_time - self.start_time
 
 
 @dataclass(frozen=True)
@@ -85,6 +100,11 @@ class ArrhythmiaSummary:
     pauses: list[float]
     longest_pause_sec: float | None = None  # longest RR interval in the recording
     escape_beats: list[float] = field(default_factory=list)  # times of ventricular escape beats ("E"): wide and late, never in a PVC count
+    escape_couplets: int = 0  # runs of exactly two escape beats (the cardiologist's "slow couplets")
+    escape_runs: int = 0  # runs of MIN_RUN_BEATS or more escape beats: an idioventricular rhythm
+    sinus_arrests: list["SinusArrest"] = field(default_factory=list)  # sinus intervals bridged by at least one escape beat
+    longest_sinus_interval: "SinusArrest | None" = None  # the longest interval between sinus beats, bridged or not
+    slow_beats_at_line: int = 0  # windows under BRADYCARDIA_LINE_BPM, beside slow_beats at the class threshold
     long_pauses: int = 0  # RR intervals over LONG_PAUSE_THRESHOLD_SEC
     slow_beats: int = 0  # HR_EXTREME_WINDOW_BEATS-beat median windows under the bradycardia threshold ...
     fast_beats: int = 0  # ... and over the tachycardia threshold ...
@@ -105,11 +125,20 @@ class ArrhythmiaSummary:
 def pvc_runs(beats: list[Beat]) -> list[list[Beat]]:
     """Group consecutive PVC-labeled beats into runs. An escape beat ("E")
     ends a run: a run of escape beats is an idioventricular rhythm, not
-    ventricular tachycardia, and is not counted here."""
+    ventricular tachycardia; see escape_runs."""
+    return _label_runs(beats, "V")
+
+
+def escape_runs(beats: list[Beat]) -> list[list[Beat]]:
+    """Group consecutive escape-labeled beats into runs."""
+    return _label_runs(beats, "E")
+
+
+def _label_runs(beats: list[Beat], label: str) -> list[list[Beat]]:
     runs: list[list[Beat]] = []
     current: list[Beat] = []
     for beat in beats:
-        if beat.label == "V":
+        if beat.label == label:
             current.append(beat)
         else:
             if current:
@@ -118,6 +147,27 @@ def pvc_runs(beats: list[Beat]) -> list[list[Beat]]:
     if current:
         runs.append(current)
     return runs
+
+
+def _sinus_intervals(beats: list[Beat]) -> list[SinusArrest]:
+    """Every interval between consecutive sinus ("N") beats with only
+    escape beats between them and an RR on every beat inside it (a missing
+    RR is a quality-gate boundary, not a measured gap)."""
+    intervals = []
+    start: int | None = None
+    for i, beat in enumerate(beats):
+        if beat.label == "N":
+            if start is not None and all(b.rr_interval for b in beats[start + 1 : i + 1]):
+                intervals.append(SinusArrest(beats[start].time, beat.time, i - start - 1))
+            start = i
+        elif beat.label != "E":
+            start = None
+    return intervals
+
+
+def sinus_arrests(beats: list[Beat]) -> list[SinusArrest]:
+    """The sinus intervals an escape beat interrupted, in recording order."""
+    return [s for s in _sinus_intervals(beats) if s.escape_beats]
 
 
 def _windowed_rr(beats: list[Beat]) -> tuple[np.ndarray, np.ndarray]:
@@ -336,6 +386,8 @@ def summarize(
     _, window_rr = _windowed_rr(beats)
     window_bpm = 60.0 / window_rr if len(window_rr) else window_rr
 
+    escape_lengths = [len(r) for r in escape_runs(beats)]
+    intervals = _sinus_intervals(beats)
     runs = run_stats(beats)  # max() keeps the first of equal keys, i.e. the earliest run
     longest_run = max(runs, key=lambda r: r.beats) if runs else None
     fastest_run = max(runs, key=lambda r: r.bpm) if runs else None
@@ -352,6 +404,11 @@ def summarize(
         pauses=pauses,
         longest_pause_sec=longest_pause_sec,
         escape_beats=[b.time for b in beats if b.label == "E"],
+        escape_couplets=sum(1 for n in escape_lengths if n == 2),
+        escape_runs=sum(1 for n in escape_lengths if n >= MIN_RUN_BEATS),
+        sinus_arrests=[s for s in intervals if s.escape_beats],
+        longest_sinus_interval=max(intervals, key=lambda s: s.duration_sec) if intervals else None,
+        slow_beats_at_line=int(np.sum(window_bpm < BRADYCARDIA_LINE_BPM)),
         long_pauses=sum(1 for rr in rr_intervals if rr > LONG_PAUSE_THRESHOLD_SEC),
         slow_beats=int(np.sum(window_bpm < brady_threshold)),
         fast_beats=int(np.sum(window_bpm > tachy_threshold)),
