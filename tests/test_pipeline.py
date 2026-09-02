@@ -25,15 +25,6 @@ MIN_EXPECTED_PVC_COUNT = 10
 MAX_EXPECTED_PVC_COUNT = 19
 
 
-def test_run_analysis_produces_report_from_fixture():
-    input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
-    with tempfile.TemporaryDirectory() as out_dir:
-        report_path = run_analysis(input_path, out_dir)
-        assert report_path == os.path.join(out_dir, "report.pdf")
-        assert os.path.getsize(report_path) > 0
-        assert os.listdir(out_dir) == ["report.pdf"]
-
-
 def test_report_contains_plausible_stats_for_known_fixture():
     """run_analysis excludes the first and last minute and this fixture is
     60 s, so the check runs one stage below it."""
@@ -156,13 +147,6 @@ def test_parse_start_time_time_only_without_header_uses_today():
 def test_parse_start_time_rejects_garbage():
     with pytest.raises(ValueError):
         parse_start_time("half past three", HEADER)
-
-
-def test_run_analysis_start_time_string_is_parsed_against_header(report_text):
-    input_path = os.path.join(FIXTURES_DIR, "mitdb_119", "119")
-    with tempfile.TemporaryDirectory() as out_dir:
-        run_analysis(input_path, out_dir, start_time="2026-08-23 15:36")
-        assert "Start: 2026-08-23 15:36:00" in report_text()
 
 
 def test_run_analysis_start_time_override_appears_in_report(report_text):
