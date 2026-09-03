@@ -36,7 +36,8 @@ The first active block contains newline-delimited ASCII metadata, including `Sam
 | 6 | 4 | Source position; advances by 1,216 bytes per ECG block |
 | 10 | 456 | 304 timepoints × 3 channels × 4-bit differences |
 | 466 | 2 | Recording sequence number, constant within one recording |
-| 468 | 4 | Recorder serial number, last five digits (27226 for `Serial_number=127226`; 52837 for `052837`) |
+| 468 | 2 | Recorder serial number, last five digits (27226 for `Serial_number=127226`; 52837 for `052837`) |
+| 470 | 2 | Diary-button field: zero except in the block being written when the button is pressed (see "Diary events") |
 | 472 | 36 | Recorder diagnostic bytes |
 | 508 | 4 | Checksum complement described above |
 
@@ -49,9 +50,13 @@ pace, -70, -38, -21, -12, -6, -3, -1
 
 Nibble 8 occurs simultaneously on all three channels and represents the documented pacemaker marker. The loader interpolates these locations rather than introducing a false -409.6 mV spike.
 
-## Event-button marks
+## Diary events
 
-No event block type has been seen. In both of Teeny's recordings (DR200 2026-08-25, DR400 2026-08-27) every valid block after the metadata block, one patient-information block (`[Pat.0]`, type bytes `0x29 0x5b`) and one zero-payload block (type `0x29 0x00`) is an ECG block. The 36 bytes at offset 472 are not a flag: the DR400 writes a fixed 34-byte record there in every other block and zeros in between, the DR200 a rolling ASCII log. Neither recording had a button press, so how a press is stored is unknown. To find out, wear the recorder briefly, press the button at noted clock times, and diff those blocks against these.
+A press of the recorder's event button is stored in the ECG block being written at the time, not in a block of its own. Bytes 470..471 of that block are non-zero: byte 471 is the 1-based index into the metadata's `DiaryText` (caret-separated; the DR200 lists `Manual Event^Chest Pain^Dizziness^Palpitation^Chest Pressure^Rapid Heart^Short of Breath^Skipped Beat^`), byte 470 an unexplained value (0, 5, 7 or 8 seen). The block's payload, checksum and source position are ordinary.
+
+Evidence: a 13.7 min DR200 test wear on 2026-09-03 with one press per diary entry (`~/Downloads/flash-events.dat`, SHA-256 `9acdcd5c...`). Exactly eight of its 486 ECG blocks have a non-zero byte 471, taking each value 1..8 once, and the recorder's rolling debug log in bytes 472..508 names three of those blocks' source positions with the same type index (`EV <source position> 5484 <n> <type>`). Both of Teeny's recordings, which had no press, carry zeros in 470..471 throughout.
+
+Bytes 470..471 are therefore not part of the session key. Reading them as such ended the recording at the first press, which is what the parser did before 2026-09-03. Whether the DR400 stores presses the same way is not confirmed: no DR400 press has been recorded. A second press inside the same 1.7 s block would presumably overwrite the first.
 
 ## Reused cards
 

@@ -273,3 +273,62 @@ def test_native_flash_ignores_everything_after_the_stale_boundary(tmp_path):
     )
     rec = load_native_flash(path)
     assert len(rec.samples) == 304
+
+
+# --- diary events -------------------------------------------------------------
+from canine_holter.types import DiaryEvent  # noqa: E402
+
+_DIARY = "Manual Event^Chest Pain^Dizziness  ^Palpitation  ^Chest Pressure^Rapid Heart ^Short of Breath^Skipped Beat^"
+
+
+def _flash_with_event(tmp_path, event, diary=_DIARY):
+    """Three ECG blocks, the middle one carrying a diary-button press."""
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    text = f"SampleRate=180\nSampleStorageFormat=1\nstart_time=10:13:56\nstart_date=09/03/26\n"
+    if diary is not None:
+        text += f"DiaryText={diary}\n"
+    blocks = [
+        data_block(encoded, source_position=5900 + i * 1216, event=event if i == 1 else (0, 0))
+        for i in range(3)
+    ]
+    path = tmp_path / "flash.dat"
+    path.write_bytes(metadata_block(text=text) + b"".join(blocks) + bytes(511))
+    return path
+
+
+def test_native_flash_keeps_decoding_past_a_diary_event_block(tmp_path):
+    # A press changes bytes 470..471 of the block being written; that is
+    # not a new recording, and the blocks after it are this recording.
+    rec = load_native_flash(_flash_with_event(tmp_path, event=(7, 2)))
+    assert rec.samples.shape == (3 * 304,)
+    assert rec.events == (DiaryEvent(time_sec=304 / 180, type_index=2, label="Chest Pain", detail=7),)
+
+
+def test_diary_labels_are_trimmed_and_indexed_from_one(tmp_path):
+    rec = load_native_flash(_flash_with_event(tmp_path, event=(0, 8)))
+    assert rec.events[0].label == "Skipped Beat"
+    rec = load_native_flash(_flash_with_event(tmp_path, event=(0, 3)))
+    assert rec.events[0].label == "Dizziness"
+
+
+def test_event_type_beyond_the_diary_gets_a_fallback_label(tmp_path):
+    rec = load_native_flash(_flash_with_event(tmp_path, event=(0, 9)))
+    assert rec.events[0].label == "Event type 9"
+
+
+def test_event_without_diary_text_gets_a_fallback_label(tmp_path):
+    rec = load_native_flash(_flash_with_event(tmp_path, event=(0, 2), diary=None))
+    assert rec.events == (DiaryEvent(time_sec=304 / 180, type_index=2, label="Event type 2", detail=0),)
+
+
+def test_no_press_means_no_events(tmp_path):
+    rec = load_native_flash(_flash_with_event(tmp_path, event=(0, 0)))
+    assert rec.events == ()
+
+
+def test_stale_blocks_are_still_told_apart_by_sequence_and_serial(tmp_path):
+    encoded = np.zeros((304, 3), dtype=np.uint8)
+    blocks = [data_block(encoded, source_position=5900), data_block(encoded, source_position=5900 + 1216, sequence=3)]
+    path = tmp_path / "flash.dat"
+    path.write_bytes(metadata_block() + b"".join(blocks) + bytes(511))
+    assert load_native_flash(path).samples.shape == (304,)

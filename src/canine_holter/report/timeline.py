@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import matplotlib
 matplotlib.use("Agg")  # no display needed - this runs headless in CLI/CI
 import matplotlib.dates as mdates
+from collections.abc import Sequence
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -19,6 +20,7 @@ MIN_SPAN_SEC = 5.0  # so a sub-second brady/tachy event is still visible at 2.5 
 # CVD-safe). Each lane is also named on the y-axis, so identity never relies
 # on color alone.
 LANES = [  # (label, color)
+    ("Event", "#1a1a1a"),  # the diary button: where the owner saw something
     ("PVC", "#2a78d6"),
     ("Escape", "#7b5cd6"),
     ("Pause", "#eb6834"),
@@ -76,6 +78,7 @@ def draw_timeline(
     beats: list[Beat],
     summary: ArrhythmiaSummary,
     start_time: datetime | None,
+    events: Sequence[float] = (),
 ) -> tuple[Axes, Axes]:
     """Draw the two-panel timeline (heart rate above, event lanes below)
     into a region of an existing figure and return the two axes. X-axis is
@@ -108,6 +111,7 @@ def draw_timeline(
     ax_hr.grid(axis="y", color=GRID_COLOR, linewidth=0.8)
 
     lane_items = [
+        list(events),
         [b.time for b in beats if b.label == "V"],
         list(summary.escape_beats),
         list(summary.pauses),

@@ -26,9 +26,9 @@ def _summary(**kw):
     return ArrhythmiaSummary(**base)
 
 
-def _draw(beats, summary, start_time):
+def _draw(beats, summary, start_time, events=()):
     fig = plt.figure(figsize=(12, 5))
-    axes = draw_timeline(fig, GridSpec(1, 1, figure=fig)[0], beats, summary, start_time)
+    axes = draw_timeline(fig, GridSpec(1, 1, figure=fig)[0], beats, summary, start_time, events=events)
     return fig, axes
 
 
@@ -51,10 +51,10 @@ def test_renders_with_every_event_type_and_wall_clock():
         pauses=[50.0, 60.0],
         escape_beats=[75.0],
     )
-    fig, (_, ax_ev) = _draw(beats, summary, datetime(2026, 8, 23, 15, 33, 8))
+    fig, (_, ax_ev) = _draw(beats, summary, datetime(2026, 8, 23, 15, 33, 8), events=(80.0,))
 
-    assert [tick.get_text() for tick in ax_ev.get_yticklabels()] == ["Tachy", "Brady", "Pause", "Escape", "PVC"]
-    assert len(ax_ev.collections) == 35  # 30 PVCs, one escape beat, two pauses, one brady event, one tachy event
+    assert [tick.get_text() for tick in ax_ev.get_yticklabels()] == ["Tachy", "Brady", "Pause", "Escape", "PVC", "Event"]
+    assert len(ax_ev.collections) == 36  # one diary event, 30 PVCs, one escape beat, two pauses, one brady event, one tachy event
     assert ax_ev.get_xlabel() == "time of day"
     assert isinstance(ax_ev.xaxis.get_major_formatter(), mdates.DateFormatter)
     plt.close(fig)

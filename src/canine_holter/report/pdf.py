@@ -24,7 +24,7 @@ from canine_holter.report.generate import (
 )
 from canine_holter.report.strip import CHANNEL_HEIGHT_MM, STRIP_WIDTH_MM, draw_strip, scale_label
 from canine_holter.report.timeline import draw_timeline
-from canine_holter.types import Beat
+from canine_holter.types import Beat, DiaryEvent
 
 PAGE_SIZE_IN = (8.5, 11)  # US Letter, portrait
 _PAGE_MM = (215.9, 279.4)
@@ -126,11 +126,12 @@ def _timeline_page(
     start_time: datetime | None,
     header: list[str],
     rows: list[list[str]],
+    events: tuple[DiaryEvent, ...] = (),
 ) -> Figure:
     fig = plt.figure(figsize=PAGE_SIZE_IN)
     fig.text(_LEFT, 0.95, "Heart-rate timeline and events", va="top", fontsize=12, fontweight="bold")
     gs = GridSpec(1, 1, figure=fig, top=0.90, bottom=0.66, left=_LEFT, right=0.97)
-    draw_timeline(fig, gs[0], beats, summary, start_time)
+    draw_timeline(fig, gs[0], beats, summary, start_time, events=[e.time_sec for e in events])
     if summary.excluded:
         fig.text(
             _LEFT, 0.62, "Hatched grey bands: excluded from analysis (artifact / off-body).",
@@ -252,6 +253,7 @@ def write_pdf(
     channels: np.ndarray | None,
     channel_names: tuple[str, ...],
     sample_rate: float | None,
+    events: tuple[DiaryEvent, ...] = (),
 ) -> None:
     """Write the multi-page PDF report. channels holds every lead to draw,
     (n_channels, n_samples); with none, each section's captions are listed
@@ -262,7 +264,7 @@ def write_pdf(
     with PdfPages(out_path) as pdf:
         pages = [
             _summary_page(content),
-            _timeline_page(beats, summary, start_time, header, first),
+            _timeline_page(beats, summary, start_time, header, first, events),
         ]
         pages += [
             _table_page(header, rest[i : i + TABLE_ROWS_PER_PAGE])
@@ -286,6 +288,7 @@ def write_report(
     start_time: datetime | None = None,
     channels: np.ndarray | None = None,
     channel_names: tuple[str, ...] = (),
+    events: tuple[DiaryEvent, ...] = (),
 ) -> str:
     """Write report.pdf into out_dir and return its path. Nothing else is
     written. Strips show every lead in channels, or the one lead in samples
@@ -297,12 +300,13 @@ def write_report(
         channels, channel_names = samples[None, :], ("ECG",)
     write_pdf(
         pdf_path,
-        content=build_content(beats, summary, start_time),
+        content=build_content(beats, summary, start_time, events),
         beats=beats,
         summary=summary,
         start_time=start_time,
         channels=channels,
         channel_names=channel_names,
+        events=events,
         sample_rate=sample_rate,
     )
     return pdf_path

@@ -3,6 +3,23 @@ from datetime import datetime
 import numpy as np
 
 
+@dataclass(frozen=True)
+class DiaryEvent:
+    """A press of the recorder's event button.
+
+    time_sec: seconds from the start of the recording, to the block the
+        press was stored in (1.7 s at 180 Hz)
+    type_index: the recorder's 1-based index into its diary list
+    label: the diary entry's text, or "Event type <n>" when the recording
+        carries no entry for it
+    detail: a recorder byte stored with the press whose meaning is unknown
+    """
+    time_sec: float
+    type_index: int
+    label: str
+    detail: int
+
+
 @dataclass(frozen=True, eq=False)
 class Recording:
     """An ECG recording in millivolts.
@@ -21,6 +38,8 @@ class Recording:
         detection runs on every lead and keeps the beats they agree on;
         the report draws them all.
     channel_names: one name per channels row
+    events: the recorder's diary-button presses, in time order; empty for
+        formats that carry none
     """
     samples: np.ndarray
     sample_rate: float
@@ -28,6 +47,7 @@ class Recording:
     source: str
     channels: np.ndarray | None = None
     channel_names: tuple[str, ...] = ()
+    events: tuple[DiaryEvent, ...] = ()
 
     def __post_init__(self) -> None:
         # Fail closed: a lead set that does not line up with the analysis
