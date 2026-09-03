@@ -49,6 +49,10 @@ pace, -70, -38, -21, -12, -6, -3, -1
 
 Nibble 8 occurs simultaneously on all three channels and represents the documented pacemaker marker. The loader interpolates these locations rather than introducing a false -409.6 mV spike.
 
+## Event-button marks
+
+No event block type has been seen. In both of Teeny's recordings (DR200 2026-08-25, DR400 2026-08-27) every valid block after the metadata block, one patient-information block (`[Pat.0]`, type bytes `0x29 0x5b`) and one zero-payload block (type `0x29 0x00`) is an ECG block. The 36 bytes at offset 472 are not a flag: the DR400 writes a fixed 34-byte record there in every other block and zeros in between, the DR200 a rolling ASCII log. Neither recording had a button press, so how a press is stored is unknown. To find out, wear the recorder briefly, press the button at noted clock times, and diff those blocks against these.
+
 ## Reused cards
 
 A recorder does not erase the card. Teeny's DR400 recording (2026-08-27) starts at source position 1,212 and runs for 266,289 ECG blocks (124.93 h); the file then continues with 450,313 more valid, checksummed ECG blocks from three older recordings: sequence numbers 6 and 5 on the same recorder, then 40 on serial 13515. The source positions skip by -4 and +4 bytes at the first two boundaries and happen to be contiguous at the third, so only the sequence/serial pair at offset 466 reliably marks the end of the recording. The parser stops at the first ECG block whose pair differs from the first ECG block's and neither decodes nor validates anything after it.

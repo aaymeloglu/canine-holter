@@ -6,6 +6,7 @@ from typing import TypeVar
 import numpy as np
 from canine_holter.types import Beat
 from canine_holter.arrhythmia.burden import (
+    BRADYCARDIA_LINE_BPM,
     HR_EXTREME_WINDOW_BEATS,
     LONG_PAUSE_THRESHOLD_SEC,
     MIN_RUN_BEATS,
@@ -15,6 +16,8 @@ from canine_holter.arrhythmia.burden import (
     ArrhythmiaSummary,
     HourRow,
     RunStats,
+    SinusArrest,
+    escape_runs,
     pvc_runs,
     run_stats,
 )
@@ -250,7 +253,12 @@ def _heart_rate_group(summary: ArrhythmiaSummary, start_time: datetime | None) -
             SummaryRow("Mean", f"{hr.mean_bpm:.0f} bpm"),
             SummaryRow("Slowest", f"{hr.min_bpm:.0f} bpm at {short_time(hr.min_time, start_time)}", window),
             SummaryRow("Fastest", f"{hr.max_bpm:.0f} bpm at {short_time(hr.max_time, start_time)}", window),
-            SummaryRow(f"Under {brady:g} bpm", _share(summary.slow_beats, summary.rated_beats), window),
+            SummaryRow(f"Under {BRADYCARDIA_LINE_BPM:g} bpm", _share(summary.slow_beats_at_line, summary.rated_beats), window),
+        ] + (
+            # The cardiologist reads against 60 bpm; the class threshold is printed beside it unless it is the same line.
+            [SummaryRow(f"Under {brady:g} bpm", _share(summary.slow_beats, summary.rated_beats), window)]
+            if brady != BRADYCARDIA_LINE_BPM else []
+        ) + [
             SummaryRow(f"Over {tachy:g} bpm", _share(summary.fast_beats, summary.rated_beats), window),
         ]
     return SummaryGroup("Heart rate", rate_rows + [
@@ -271,7 +279,9 @@ def _supraventricular_group() -> SummaryGroup:
 
 
 def _run_text(run: RunStats, start_time: datetime | None) -> str:
-    return f"{run.beats} beats, {run.bpm:.0f} bpm, {short_time(run.start_time, start_time)}"
+    """Beats and rate only: the time is on the run's strip, and the panel
+    row has no room for it beside the rate band."""
+    return f"{run.beats} beats, {run.bpm:.0f} bpm"
 
 
 def _pvc_24h_row(summary: ArrhythmiaSummary) -> SummaryRow:
@@ -290,6 +300,8 @@ def _ectopy_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> Su
         SummaryRow("Triplets", str(summary.triplets), COUNT_BAND, count_status(summary.triplets)),
         SummaryRow("VT runs (4+)", str(summary.vtach_runs), COUNT_BAND, count_status(summary.vtach_runs)),
         SummaryRow("Escape beats", str(len(summary.escape_beats)), f"wide, RR >= {ESCAPE_RR_RATIO:g}x local"),
+        SummaryRow("Escape couplets", str(summary.escape_couplets)),
+        SummaryRow(f"Escape runs ({MIN_RUN_BEATS}+)", str(summary.escape_runs)),
         SummaryRow("Longest run", _run_text(longest, start_time) if longest else "none"),
         SummaryRow(
             "Fastest run",
@@ -300,6 +312,19 @@ def _ectopy_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> Su
     ])
 
 
+def _escape_count(n: int, kind: str = "escape beat") -> str:
+    return f"{n} {kind}{'s' if n != 1 else ''}"
+
+
+def _sinus_interval_row(interval: SinusArrest | None) -> SummaryRow:
+    """The longest gap between sinus beats: an escape beat interrupts a
+    sinus arrest without ending it, so this can exceed the longest RR."""
+    if interval is None:
+        return SummaryRow("Sinus interval", "n/a", "longest")
+    reference = f"longest; {_escape_count(interval.escape_beats)} inside" if interval.escape_beats else "longest: the longest pause"
+    return SummaryRow("Sinus interval", f"{interval.duration_sec:.2f} s", reference, pause_status(interval.duration_sec))
+
+
 def _pause_group(summary: ArrhythmiaSummary) -> SummaryGroup:
     longest = summary.longest_pause_sec
     return SummaryGroup("Pauses", [
@@ -308,6 +333,8 @@ def _pause_group(summary: ArrhythmiaSummary) -> SummaryGroup:
         SummaryRow(
             "Longest", f"{longest:.2f} s" if longest is not None else "n/a", PAUSE_BAND, pause_status(longest)
         ),
+        _sinus_interval_row(summary.longest_sinus_interval),
+        SummaryRow("Sinus arrests", str(len(summary.sinus_arrests)), "bridged by escape beats"),
     ])
 
 
@@ -418,25 +445,44 @@ def _section(title: str, runs: list[list[Beat]], beats: list[Beat], start_time: 
     ])
 
 
-def _escape_caption(index: int, beat: Beat, beats: list[Beat], start_time: datetime | None) -> StripCaption:
-    typical_rr, typical_qrs = _typical(beats, next(i for i, b in enumerate(beats) if b.time == beat.time))
-    what = (
-        f"The marked beat arrived {_sec(beat.rr_interval)} after the beat before it (typical here"
-        f" {_sec(typical_rr)}) and its QRS lasts {_sec(beat.qrs_duration)} (typical {_sec(typical_qrs)}):"
-        " wide and late is what makes it a ventricular escape beat."
+def _escape_caption(index: int, run: list[Beat], beats: list[Beat], start_time: datetime | None) -> StripCaption:
+    """Caption for one escape beat, or for a run of them (a slow couplet, or
+    an idioventricular rhythm at three or more)."""
+    when = short_time(run[0].time, start_time)
+    if len(run) == 1:
+        beat = run[0]
+        typical_rr, typical_qrs = _typical(beats, next(i for i, b in enumerate(beats) if b.time == beat.time))
+        what = (
+            f"The marked beat arrived {_sec(beat.rr_interval)} after the beat before it (typical here"
+            f" {_sec(typical_rr)}) and its QRS lasts {_sec(beat.qrs_duration)} (typical {_sec(typical_qrs)}):"
+            " wide and late is what makes it a ventricular escape beat."
+        )
+        return StripCaption(f"Escape beat {index + 1} · {when}", what, ESCAPE_SIGNIFICANCE)
+    rrs = [b.rr_interval for b in run[1:] if b.rr_interval]
+    rate = f" at {60.0 / float(np.mean(rrs)):.0f} bpm" if rrs else ""
+    if len(run) == 2:
+        return StripCaption(
+            f"Escape couplet {index + 1} · {when}",
+            f"2 escape beats in a row{rate}: a slow couplet.",
+            ESCAPE_SIGNIFICANCE,
+        )
+    return StripCaption(
+        f"Escape run {index + 1} · {when}",
+        f"{len(run)} escape beats in a row{rate}: an idioventricular rhythm.",
+        ESCAPE_SIGNIFICANCE,
     )
-    return StripCaption(f"Escape beat {index + 1} · {short_time(beat.time, start_time)}", what, ESCAPE_SIGNIFICANCE)
 
 
 def _escape_section(beats: list[Beat], start_time: datetime | None) -> StripSection | None:
-    """Every escape beat gets a strip, capped like the PVC sections: the
-    width call behind an E is as reviewable, and as fallible, as a V."""
-    escapes = [b for b in beats if b.label == "E"]
-    if not escapes:
+    """Every escape beat or run of them gets a strip, capped like the PVC
+    sections: the width call behind an E is as reviewable, and as fallible,
+    as a V."""
+    runs = escape_runs(beats)
+    if not runs:
         return None
-    shown = select_evenly(escapes, MAX_STRIPS_PER_SECTION)
-    return StripSection(_capped_heading(ESCAPE_TITLE, len(shown), len(escapes)), [
-        StripItem([beat], _escape_caption(i, beat, beats, start_time)) for i, beat in enumerate(shown)
+    shown = select_evenly(runs, MAX_STRIPS_PER_SECTION)
+    return StripSection(_capped_heading(ESCAPE_TITLE, len(shown), len(runs)), [
+        StripItem(run, _escape_caption(i, run, beats, start_time)) for i, run in enumerate(shown)
     ])
 
 
@@ -478,8 +524,9 @@ def _pause_beats(beats: list[Beat], summary: ArrhythmiaSummary) -> list[Beat]:
 
 def _extremes_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time: datetime | None) -> StripSection | None:
     """Strips a reader looks at first: fastest and slowest heart rate, the
-    longest pause (when one crossed the threshold), and the fastest run (when
-    there is one). Absent without heart-rate stats, since a recording that
+    longest pause (when one crossed the threshold), the longest sinus
+    interval when an escape beat bridged it (otherwise it is the longest
+    pause), and the fastest run (when there is one). Absent without heart-rate stats, since a recording that
     short has nothing to show."""
     hr = summary.heart_rate
     if hr is None:
@@ -509,6 +556,20 @@ def _extremes_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time:
                 status,
             ),
             pause=(pause[0].time, pause[-1].time),
+        ))
+    arrest = summary.longest_sinus_interval
+    if arrest is not None and arrest.escape_beats:
+        status = pause_status(arrest.duration_sec)
+        items.append(StripItem(
+            [b for b in beats if arrest.start_time < b.time < arrest.end_time],
+            StripCaption(
+                f"Longest sinus interval · {short_time(arrest.end_time, start_time)}",
+                f"No sinus beat for {arrest.duration_sec:.2f} s;"
+                f" {_escape_count(arrest.escape_beats, 'ventricular escape beat')} filled the gap.",
+                PAUSE_SIGNIFICANCE[status],
+                status,
+            ),
+            pause=(arrest.start_time, arrest.end_time),
         ))
     if summary.fastest_run is not None:
         run = next(r for r in pvc_runs(beats) if r[0].time == summary.fastest_run.start_time)
