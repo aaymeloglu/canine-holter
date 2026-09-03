@@ -70,6 +70,7 @@ def run_analysis(
             samples=rec.samples[:keep],
             channels=None if rec.channels is None else rec.channels[:, :keep],
         )
+    events = tuple(e for e in rec.events if e.time_sec < quality.duration_sec)  # a press in the trimmed tail is off the dog
     leads = rec.samples if rec.channels is None else rec.channels
     beats = exclude_beats(detect_beats(leads, rec.sample_rate), quality)
     labeled = classify_beats(beats)
@@ -83,4 +84,5 @@ def run_analysis(
         start_time=rec.start_time,
         channels=rec.channels,
         channel_names=rec.channel_names,
+        events=events,
     )

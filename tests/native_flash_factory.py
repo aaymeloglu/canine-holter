@@ -38,9 +38,12 @@ def data_block(
     source_position: int = 5900,
     sequence: int = 4,
     serial: int = 52837,
+    event: tuple[int, int] = (0, 0),
 ) -> bytes:
     """One ECG block. sequence/serial are the recording sequence number and
-    recorder serial number that every block of one recording repeats."""
+    recorder serial number that every block of one recording repeats.
+    event is (detail, type) for bytes 470..471: a diary-button press stored
+    in the block being written, (0, 0) otherwise."""
     assert encoded.shape == (304, 3)
     nibbles = encoded.astype(np.uint8).reshape(-1)
     packed = nibbles[0::2] | (nibbles[1::2] << 4)
@@ -50,7 +53,7 @@ def data_block(
     block[4] = 0x1E
     struct.pack_into("<I", block, 6, source_position)
     block[10:466] = packed.tobytes()
-    struct.pack_into("<HI", block, 466, sequence, serial)
+    struct.pack_into("<HHBB", block, 466, sequence, serial, *event)
     return finish_block(block)
 
 

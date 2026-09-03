@@ -169,3 +169,20 @@ def test_run_analysis_hands_the_start_time_to_the_summary_so_hours_align_to_the_
     with tempfile.TemporaryDirectory() as out_dir:
         run_analysis(input_path, out_dir, start_time=datetime(2026, 8, 23, 15, 36))
     assert seen["start_time"] == datetime(2026, 8, 23, 15, 36)
+
+
+def test_run_analysis_lists_diary_events_and_keeps_the_recording_past_them(tmp_path, report_text):
+    # 110 blocks of the synthetic spike train with a press stored in block 60.
+    encoded = _spike_train_block_encoding()
+    blocks = b"".join(
+        data_block(encoded, source_position=5900 + i * 304 * 4, event=(7, 2) if i == 60 else (0, 0))
+        for i in range(110)
+    )
+    text = "SampleRate=180\nSampleStorageFormat=1\nstart_time=10:13:56\nstart_date=09/03/26\nDiaryText=Manual Event^Chest Pain^\n"
+    flash_path = tmp_path / "flash.dat"
+    flash_path.write_bytes(metadata_block(text=text) + blocks + bytes(511))
+    run_analysis(str(flash_path), str(tmp_path / "out"))
+    content = report_text()
+    assert "Diary events: 1 (button presses)" in content
+    assert "Chest Pain · 10:15:37" in content  # block 60 starts 101.3 s in
+    assert re.search(r"Analyzed:\s*0h 1m", content), content  # the blocks after the press were analyzed

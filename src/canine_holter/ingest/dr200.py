@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from canine_holter.types import Recording
+from canine_holter.types import DiaryEvent, Recording
 
 
 DR200_CHANNEL_NAMES = ("Ch 1", "Ch 2", "Ch 3")  # the DR200 and HE/LX call them channels, not leads
@@ -20,11 +20,18 @@ _DATA_BLOCK_TYPE = 0x1E
 _DATA_PAYLOAD = slice(10, 466)
 _SAMPLES_PER_BLOCK = 304
 _SOURCE_BYTES_PER_SAMPLE = 4
-# Bytes 466..472 of every ECG block: u16 recording sequence number, u32
+# Bytes 466..470 of every ECG block: u16 recording sequence number, u16
 # recorder serial number (its last five digits: 27226 for serial 127226).
 # Both are constant within one recording, so the first ECG block's pair
 # identifies the recording and a reused card's older blocks end it.
+# Bytes 470..471 are the diary-button field: zero in every block except
+# the one being written when the button is pressed, where byte 471 is the
+# 1-based index into the metadata's DiaryText and byte 470 an unexplained
+# value. Reading them as part of the key would end the recording at the
+# first press (docs/dr200-format.md, "Diary events").
 _SESSION_KEY_OFFSET = 466
+_EVENT_OFFSET = 470
+_DIARY_SEPARATOR = "^"
 _ZERO_BLOCK = bytes(_BLOCK_SIZE)
 
 # SampleStorageFormat=1 stores one four-bit sample difference per channel.
@@ -41,7 +48,28 @@ class NativeDR200FormatError(ValueError):
 
 
 def _session_key(block: bytes) -> tuple[int, int]:
-    return struct.unpack_from("<HI", block, _SESSION_KEY_OFFSET)
+    return struct.unpack_from("<HH", block, _SESSION_KEY_OFFSET)
+
+
+def _event_field(block: bytes) -> tuple[int, int]:
+    """(detail, type index) of the diary-button field; (0, 0) when no press."""
+    return block[_EVENT_OFFSET], block[_EVENT_OFFSET + 1]
+
+
+def _diary(metadata: dict[str, str]) -> list[str]:
+    """The recorder's diary entries in index order (1-based on the card)."""
+    text = metadata.get("DiaryText", "")
+    return [entry.strip() for entry in text.split(_DIARY_SEPARATOR) if entry.strip()]
+
+
+def _diary_event(block_index: int, detail: int, type_index: int, diary: list[str]) -> DiaryEvent:
+    label = diary[type_index - 1] if 1 <= type_index <= len(diary) else f"Event type {type_index}"
+    return DiaryEvent(
+        time_sec=block_index * _SAMPLES_PER_BLOCK / DR200_SAMPLE_RATE,
+        type_index=type_index,
+        label=label,
+        detail=detail,
+    )
 
 
 def _is_data_block(block: bytes) -> bool:
@@ -124,12 +152,13 @@ def _iter_active_blocks(path: Path):
             block_index += 1
 
 
-def _inspect_native_flash(path: Path) -> tuple[int, datetime | None]:
+def _inspect_native_flash(path: Path) -> tuple[int, datetime | None, tuple[DiaryEvent, ...]]:
     metadata: dict[str, str] = {}
     data_block_count = 0
     expected_position: int | None = None
     active_block_count = 0
     session_key: tuple[int, int] | None = None
+    presses: list[tuple[int, int, int]] = []  # (block index, detail, type index)
 
     for _, block in _iter_active_blocks(path):
         active_block_count += 1
@@ -154,6 +183,9 @@ def _inspect_native_flash(path: Path) -> tuple[int, datetime | None]:
         expected_position = (
             source_position + _SAMPLES_PER_BLOCK * _SOURCE_BYTES_PER_SAMPLE
         )
+        detail, type_index = _event_field(block)
+        if type_index:
+            presses.append((data_block_count, detail, type_index))
         data_block_count += 1
 
     if active_block_count == 0:
@@ -177,7 +209,9 @@ def _inspect_native_flash(path: Path) -> tuple[int, datetime | None]:
             f"Unsupported DR200 sample rate {sample_rate:g} Hz; expected 180 Hz"
         )
 
-    return data_block_count, _read_start_time(metadata)
+    diary = _diary(metadata)
+    events = tuple(_diary_event(index, detail, type_index, diary) for index, detail, type_index in presses)
+    return data_block_count, _read_start_time(metadata), events
 
 
 def _decode_data_block(block: bytes) -> tuple[np.ndarray, np.ndarray]:
@@ -206,7 +240,8 @@ def load_native_flash(path: str | Path, *, source: str | None = None) -> Recordi
 
     A reused card keeps older recordings' blocks after this one; decoding
     stops at the first ECG block whose sequence number or serial differs
-    from the first block's.
+    from the first block's. Diary-button presses are read from the blocks
+    they were stored in and returned as the recording's events.
     """
     flash_path = Path(path)
     try:
@@ -216,7 +251,7 @@ def load_native_flash(path: str | Path, *, source: str | None = None) -> Recordi
     if size == 0:
         raise NativeDR200FormatError(f"DR200 flash.dat is empty: {flash_path}")
 
-    data_block_count, start_time = _inspect_native_flash(flash_path)
+    data_block_count, start_time, events = _inspect_native_flash(flash_path)
 
     counts_by_channel = np.empty((3, data_block_count * _SAMPLES_PER_BLOCK), dtype=np.float64)
     cursor = 0
@@ -247,4 +282,5 @@ def load_native_flash(path: str | Path, *, source: str | None = None) -> Recordi
         source=source if source is not None else str(flash_path),
         channels=channels_mv,
         channel_names=DR200_CHANNEL_NAMES,
+        events=events,
     )

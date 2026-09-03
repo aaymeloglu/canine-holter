@@ -573,3 +573,29 @@ def test_escape_run_is_one_strip_with_every_beat_marked_and_its_rate():
     assert [b.label for b in item.run] == ["E", "E", "E"]
     assert item.caption.title == "Escape run 1 · t=8s"
     assert item.caption.what == "3 escape beats in a row at 30 bpm: an idioventricular rhythm."
+
+
+# --- diary events -------------------------------------------------------------
+from canine_holter.report.generate import EVENTS_SECTION_TITLE  # noqa: E402
+from canine_holter.types import DiaryEvent  # noqa: E402
+
+
+def test_recording_panel_counts_diary_events():
+    beats = _steady(20, 0.5)
+    events = (DiaryEvent(3.0, 2, "Chest Pain", 7), DiaryEvent(6.0, 1, "Manual Event", 0))
+    rows = _rows(build_content(beats, summarize(beats), None, events=events), "Recording")
+    assert rows["Diary events"] == SummaryRow("Diary events", "2", "button presses")
+    assert _rows(build_content(beats, summarize(beats), None), "Recording")["Diary events"].value == "0"
+
+
+def test_diary_event_strips_follow_the_extremes_one_per_press():
+    beats = _steady(20, 0.5)
+    events = (DiaryEvent(3.0, 2, "Chest Pain", 7), DiaryEvent(6.0, 1, "Manual Event", 0))
+    content = build_content(beats, summarize(beats), datetime(2026, 9, 3, 10, 13, 56), events=events)
+    assert [s.heading for s in content.sections][:2] == [EXTREMES_TITLE, EVENTS_SECTION_TITLE]
+    section = content.sections[1]
+    assert [i.caption.title for i in section.items] == ["Chest Pain · 10:13:59", "Manual Event · 10:14:02"]
+    assert section.items[0].center_time == 3.0
+    assert not section.items[0].mark
+    assert section.items[0].caption.what == "The button was pressed here; the strip is centred on the press."
+    assert section.items[0].caption.status is None

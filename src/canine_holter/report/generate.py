@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TypeVar
 import numpy as np
-from canine_holter.types import Beat
+from canine_holter.types import Beat, DiaryEvent
 from canine_holter.arrhythmia.burden import (
     BRADYCARDIA_LINE_BPM,
     HR_EXTREME_WINDOW_BEATS,
@@ -44,6 +44,8 @@ MAX_STRIPS_PER_SECTION = 24  # 12 PDF pages at 2 strips/page; never a silent cap
 EXTREMES_TITLE = "Heart-rate extremes, longest pause, fastest run"
 EVENTS_TITLE = "Flagged events (couplets, triplets, VT runs)"
 ISOLATED_TITLE = "Isolated PVCs"
+EVENTS_SECTION_TITLE = "Diary events"
+EVENT_WHAT = "The button was pressed here; the strip is centred on the press."
 ESCAPE_TITLE = "Ventricular escape beats"
 # One line: a strip's caption has room for two lines of "what" and one of significance.
 ESCAPE_SIGNIFICANCE = "The gap is the finding (see the pauses), not the beat; several in a row need a cardiologist's look."
@@ -123,15 +125,19 @@ class StripCaption:
 @dataclass(frozen=True)
 class StripItem:
     """One rhythm strip: the beats it is about, its caption, the gap to
-    bracket when it shows a pause, and whether its beats are shaded (an
-    hourly rhythm sample shades nothing: nothing in it is flagged)."""
+    bracket when it shows a pause, whether its beats are shaded (an hourly
+    rhythm sample shades nothing: nothing in it is flagged), and, for a
+    strip about a moment rather than beats, the moment to centre on."""
     run: list[Beat]
     caption: StripCaption
     pause: tuple[float, float] | None = None
     mark: bool = True
+    center: float | None = None
 
     @property
     def center_time(self) -> float:
+        if self.center is not None:
+            return self.center
         return (self.run[0].time + self.run[-1].time) / 2
 
 
@@ -223,7 +229,9 @@ def _recorder_ran_rows(summary: ArrhythmiaSummary) -> list[SummaryRow]:
     return [SummaryRow("Recorder ran", ran, "off-body tail trimmed")]
 
 
-def _recording_group(summary: ArrhythmiaSummary, start_time: datetime | None) -> SummaryGroup:
+def _recording_group(
+    summary: ArrhythmiaSummary, start_time: datetime | None, events: tuple[DiaryEvent, ...] = ()
+) -> SummaryGroup:
     duration, analyzed = summary.duration_sec, summary.analyzed_sec
     pct = 100.0 * analyzed / duration if duration else 0.0
     return SummaryGroup("Recording", [
@@ -233,6 +241,7 @@ def _recording_group(summary: ArrhythmiaSummary, start_time: datetime | None) ->
         SummaryRow("Analyzed", f"{format_duration(analyzed)} ({pct:.0f}%)", ANALYZED_BAND, analyzed_status(analyzed)),
         SummaryRow("Excluded", format_duration(duration - analyzed), "artifact / off-body"),
         SummaryRow("Total beats", str(summary.total_beats)),
+        SummaryRow("Diary events", str(len(events)), "button presses"),
     ])
 
 
@@ -354,10 +363,12 @@ def _variability_group(summary: ArrhythmiaSummary) -> SummaryGroup:
     return SummaryGroup("RR variability", rows)
 
 
-def summary_groups(summary: ArrhythmiaSummary, start_time: datetime | None) -> list[SummaryGroup]:
+def summary_groups(
+    summary: ArrhythmiaSummary, start_time: datetime | None, events: tuple[DiaryEvent, ...] = ()
+) -> list[SummaryGroup]:
     """The six summary panels, in reading order (a 3x2 grid on the page)."""
     return [
-        _recording_group(summary, start_time),
+        _recording_group(summary, start_time, events),
         _heart_rate_group(summary, start_time),
         _ectopy_group(summary, start_time),
         _supraventricular_group(),
@@ -486,6 +497,23 @@ def _escape_section(beats: list[Beat], start_time: datetime | None) -> StripSect
     ])
 
 
+def _events_section(events: tuple[DiaryEvent, ...], start_time: datetime | None) -> StripSection | None:
+    """One strip per diary-button press, centred on the press: when the
+    dog has collapse episodes, this is the strip a cardiologist wants
+    first. Nothing is shaded; the leads show whatever was recorded, even
+    inside an excluded span."""
+    if not events:
+        return None
+    shown = select_evenly(list(events), MAX_STRIPS_PER_SECTION)
+    return StripSection(_capped_heading(EVENTS_SECTION_TITLE, len(shown), len(events)), [
+        StripItem(
+            [], StripCaption(f"{event.label} · {short_time(event.time_sec, start_time)}", EVENT_WHAT, ""),
+            mark=False, center=event.time_sec,
+        )
+        for event in shown
+    ])
+
+
 def _hour_rate_text(row: HourRow) -> str:
     if row.mean_bpm is None:
         return "Too few beats this hour for a rate."
@@ -583,15 +611,22 @@ def _extremes_section(beats: list[Beat], summary: ArrhythmiaSummary, start_time:
     return StripSection(EXTREMES_TITLE, items)
 
 
-def build_content(beats: list[Beat], summary: ArrhythmiaSummary, start_time: datetime | None) -> ReportContent:
+def build_content(
+    beats: list[Beat],
+    summary: ArrhythmiaSummary,
+    start_time: datetime | None,
+    events: tuple[DiaryEvent, ...] = (),
+) -> ReportContent:
     """Assemble the report content: summary panels, the strip sections
-    (heart-rate extremes, then flagged multi-beat runs, then isolated PVCs,
-    then ventricular escape beats, then one strip per hour; the capped
-    sections state their cap in the heading), and the hourly table. Event times are wall-clock labels
+    (heart-rate extremes, then the diary-button presses, then flagged
+    multi-beat runs, then isolated PVCs, then ventricular escape beats,
+    then one strip per hour; the capped sections state their cap in the
+    heading), and the hourly table. Event times are wall-clock labels
     when start_time is known."""
     runs = pvc_runs(beats)
     sections = [
         _extremes_section(beats, summary, start_time),
+        _events_section(events, start_time),
         _section(EVENTS_TITLE, [r for r in runs if len(r) >= 2], beats, start_time),
         _section(ISOLATED_TITLE, [r for r in runs if len(r) == 1], beats, start_time),
         _escape_section(beats, start_time),
@@ -600,7 +635,7 @@ def build_content(beats: list[Beat], summary: ArrhythmiaSummary, start_time: dat
     return ReportContent(
         title=REPORT_TITLE,
         disclaimer=DISCLAIMER,
-        summary_groups=summary_groups(summary, start_time),
+        summary_groups=summary_groups(summary, start_time, events),
         footer_lines=list(FOOTER_LINES),
         primer_title=HOW_TO_READ_TITLE,
         primer_lines=HOW_TO_READ_STRIPS,
