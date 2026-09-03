@@ -40,7 +40,7 @@ The downstream pipeline is sample-rate-agnostic and has been exercised at 180, 3
 
 ## Classifier scope
 
-Version 1 is deliberately rules-based. There is no public canine-labeled PVC dataset sufficient for a learned classifier, and human data is not a substitute for canine validation. A learned classifier belongs behind the existing classification boundary only after cardiologist-reviewed canine ground truth exists.
+Version 1 is rules-based: causal timing and width rules with a rolling baseline. That is a consequence of the ground truth we have, not a preference. As of 2026-09-02 the only external truth is the cardiologist's HE/LX report for the 2026-08-27 recording: hourly counts and a handful of strip times, not a label per beat. Any rule that goes beyond timing and width (beat shape against a template, or anything trained) needs beat-level truth to be tuned and judged; `docs/superpowers/specs/2026-09-02-beat-shape-design.md` shows a shape rule over-calling PVCs 6-7x without it, and lists the stretches whose beat-by-beat read would unblock it. Human ECG data is not a substitute for canine validation.
 
 ## Native DR200/DR400 format
 
@@ -102,5 +102,5 @@ The GUI ships through GitHub Releases as a signed/notarized macOS app and an uns
 - Detection/classification and brady/tachy/pause thresholds remain provisional.
 - Quality gating catches severe artifact and the first/last minute, but not all moderate or normal-amplitude hash noise. Do not add kurtosis or template-correlation SQI without new evidence; existing specs document why they failed.
 - Lead agreement removes one lead's T-wave and P-wave detections and its posture-shifted widths, but a noise burst or a T wave that every lead detects as a beat still reads as a PVC.
-- Escape beats are undercounted: the width measurement calls few of the night-time escape beats wide (8 of the cardiologist's 32 on 2026-08-27). Runs of escape beats (idioventricular rhythm) are not counted. Escape couplets and runs, and sinus arrests bridged by escape beats, are undercounted with them.
+- Escape beats are undercounted: the width measurement calls few of the night-time escape beats wide (8 of the cardiologist's 32 on 2026-08-27); the ones it misses differ by shape, not width. Escape couplets and runs, and sinus arrests bridged by escape beats, are undercounted with them. See the beat-shape spec for what unblocks it.
 - Event-button presses are not read: no event block has been seen in a native file, and neither real recording had a press (see `docs/dr200-format.md`).
