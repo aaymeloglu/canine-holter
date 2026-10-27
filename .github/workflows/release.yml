@@ -125,6 +125,7 @@ jobs:
           name: macos
           path: dist/canine-holter.dmg
           if-no-files-found: error
+          retention-days: 1
 
   build-windows:
     runs-on: windows-latest
@@ -163,6 +164,7 @@ jobs:
           name: windows
           path: dist/canine-holter-windows.zip
           if-no-files-found: error
+          retention-days: 1
 
   release:
     needs: [build-macos, build-windows]
